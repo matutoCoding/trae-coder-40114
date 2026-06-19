@@ -1,7 +1,7 @@
 import { useState } from 'react';
-import { Plus, Sparkles, User, MapPin, Calendar, Package, Clock, CheckCircle, XCircle, Loader } from 'lucide-react';
+import { Plus, Sparkles, User, MapPin, Calendar, Package, Clock, CheckCircle, XCircle, Loader, ChevronDown, ChevronUp, Award, BarChart3 } from 'lucide-react';
 import { useAppStore } from '../store/useAppStore';
-import type { Order } from '../types';
+import type { Order, CandidateFlorist } from '../types';
 import { format } from 'date-fns';
 
 const statusLabels = {
@@ -32,12 +32,21 @@ const packagePrices = {
   premium: 12800,
 };
 
+const levelLabels = {
+  senior: '高级花艺师',
+  intermediate: '中级花艺师',
+  junior: '初级花艺师',
+};
+
 function AssignmentModule() {
-  const { orders, florists, addOrder, deleteOrder, autoAssignOrder, getAvailableFlorists } = useAppStore();
+  const { orders, florists, addOrder, deleteOrder, getAvailableFlorists, getCandidateFlorists, confirmAssign } = useAppStore();
   const [showOrderModal, setShowOrderModal] = useState(false);
   const [selectedStatus, setSelectedStatus] = useState<string>('all');
-  const [assigningId, setAssigningId] = useState<string | null>(null);
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
+  const [showRecommendModal, setShowRecommendModal] = useState(false);
+  const [candidates, setCandidates] = useState<CandidateFlorist[]>([]);
+  const [currentOrderId, setCurrentOrderId] = useState<string>('');
+  const [confirmingId, setConfirmingId] = useState<string | null>(null);
   const [orderForm, setOrderForm] = useState({
     customerName: '',
     customerPhone: '',
@@ -86,12 +95,24 @@ function AssignmentModule() {
     showToast('订单创建成功', 'success');
   };
 
-  const handleAutoAssign = async (orderId: string) => {
-    setAssigningId(orderId);
-    await new Promise((resolve) => setTimeout(resolve, 800));
-    const result = autoAssignOrder(orderId);
-    setAssigningId(null);
-    showToast(result.message, result.success ? 'success' : 'error');
+  const handleSmartAssign = (orderId: string) => {
+    const result = getCandidateFlorists(orderId);
+    setCandidates(result);
+    setCurrentOrderId(orderId);
+    setShowRecommendModal(true);
+  };
+
+  const handleConfirmAssign = async (floristId: string) => {
+    setConfirmingId(floristId);
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    const result = confirmAssign(currentOrderId, floristId);
+    setConfirmingId(null);
+    if (result.success) {
+      setShowRecommendModal(false);
+      showToast(result.message, 'success');
+    } else {
+      showToast(result.message, 'error');
+    }
   };
 
   const handleDeleteOrder = (orderId: string) => {
@@ -180,7 +201,7 @@ function AssignmentModule() {
 
       <div className="card">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
             {['all', 'pending', 'assigned', 'in_progress', 'completed'].map((status) => (
               <button
                 key={status}
@@ -260,11 +281,7 @@ function AssignmentModule() {
                             <div>
                               <p className="text-sm font-medium text-gray-700">{florist.name}</p>
                               <p className="text-xs text-gray-400">
-                                {florist.level === 'senior'
-                                  ? '高级花艺师'
-                                  : florist.level === 'intermediate'
-                                  ? '中级花艺师'
-                                  : '初级花艺师'}
+                                {levelLabels[florist.level]}
                               </p>
                             </div>
                           </div>
@@ -282,21 +299,12 @@ function AssignmentModule() {
                             </span>
                           </div>
                           <button
-                            onClick={() => handleAutoAssign(order.id)}
-                            disabled={assigningId === order.id || availableCount === 0}
+                            onClick={() => handleSmartAssign(order.id)}
+                            disabled={availableCount === 0}
                             className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-rose-500 to-rose-600 text-white rounded-lg hover:from-rose-600 hover:to-rose-700 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
                           >
-                            {assigningId === order.id ? (
-                              <>
-                                <Loader className="w-4 h-4 animate-spin" />
-                                分配中...
-                              </>
-                            ) : (
-                              <>
-                                <Sparkles className="w-4 h-4" />
-                                智能分配
-                              </>
-                            )}
+                            <Sparkles className="w-4 h-4" />
+                            智能分配
                           </button>
                         </>
                       )}
@@ -332,24 +340,171 @@ function AssignmentModule() {
               <Clock className="w-5 h-5 text-rose-600" />
             </div>
             <h4 className="font-medium text-gray-800 mb-1">空闲优先</h4>
-            <p className="text-sm text-gray-500">优先选择当日档期空闲的花艺师，确保服务质量</p>
+            <p className="text-sm text-gray-500">优先选择当日档期空闲的花艺师，婚礼、撤场、休假均视为占用</p>
           </div>
           <div className="p-4 bg-gradient-to-br from-champagne-50 to-transparent rounded-xl">
             <div className="w-10 h-10 bg-champagne-100 rounded-lg flex items-center justify-center mb-3">
-              <User className="w-5 h-5 text-champagne-600" />
+              <BarChart3 className="w-5 h-5 text-champagne-600" />
             </div>
             <h4 className="font-medium text-gray-800 mb-1">负载均衡</h4>
-            <p className="text-sm text-gray-500">根据花艺师当月工作量均衡分配，避免资源碎片化</p>
+            <p className="text-sm text-gray-500">根据近7天工作量均衡分配，避免资源碎片化</p>
           </div>
           <div className="p-4 bg-gradient-to-br from-sage-50 to-transparent rounded-xl">
             <div className="w-10 h-10 bg-sage-100 rounded-lg flex items-center justify-center mb-3">
-              <Sparkles className="w-5 h-5 text-sage-600" />
+              <Award className="w-5 h-5 text-sage-600" />
             </div>
             <h4 className="font-medium text-gray-800 mb-1">择优推荐</h4>
-            <p className="text-sm text-gray-500">同等条件下优先选择高级别、高评价的花艺师</p>
+            <p className="text-sm text-gray-500">同等条件下优先选择高级别花艺师，综合评分排序推荐</p>
           </div>
         </div>
       </div>
+
+      {showRecommendModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl w-full max-w-2xl p-6 max-h-[85vh] overflow-y-auto">
+            <div className="flex items-center justify-between mb-4">
+              <div>
+                <h3 className="text-lg font-semibold text-gray-800">智能推荐排序</h3>
+                <p className="text-sm text-gray-500 mt-0.5">
+                  婚礼日期：{orders.find((o) => o.id === currentOrderId)?.weddingDate}
+                </p>
+              </div>
+              <button
+                onClick={() => setShowRecommendModal(false)}
+                className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
+              >
+                <XCircle className="w-5 h-5 text-gray-400" />
+              </button>
+            </div>
+
+            <div className="mb-4 p-3 bg-rose-50 rounded-lg">
+              <p className="text-sm text-rose-700">
+                评分规则：综合得分 = (7 - 近7天负载数) × 10 + 等级分 × 20
+                （高级=30/中级=20/初级=10）
+              </p>
+            </div>
+
+            <div className="space-y-3">
+              {candidates.map((candidate) => (
+                <div
+                  key={candidate.florist.id}
+                  className={`border rounded-xl p-4 ${
+                    candidate.isAvailable
+                      ? 'border-gray-100 hover:border-rose-200'
+                      : 'border-gray-100 bg-gray-50 opacity-75'
+                  }`}
+                >
+                  <div className="flex items-start justify-between">
+                    <div className="flex items-start gap-4">
+                      <div className="relative">
+                        <div className="w-12 h-12 bg-gradient-to-br from-rose-100 to-champagne-100 rounded-full flex items-center justify-center text-2xl">
+                          {candidate.florist.avatar}
+                        </div>
+                        {candidate.isAvailable && candidate.rank <= 3 && (
+                          <div
+                            className={`absolute -top-1 -right-1 w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold text-white ${
+                              candidate.rank === 1
+                                ? 'bg-amber-500'
+                                : candidate.rank === 2
+                                ? 'bg-gray-400'
+                                : 'bg-amber-700'
+                            }`}
+                          >
+                            {candidate.rank}
+                          </div>
+                        )}
+                      </div>
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <h4 className="font-semibold text-gray-800">{candidate.florist.name}</h4>
+                          {candidate.isAvailable ? (
+                            <span className="badge bg-green-100 text-green-700">可接单</span>
+                          ) : (
+                            <span className="badge bg-red-100 text-red-700">不可用</span>
+                          )}
+                        </div>
+                        <div className="flex items-center gap-3 mt-1 text-sm">
+                          <span className="text-gray-500">{levelLabels[candidate.florist.level]}</span>
+                          {candidate.unavailabilityReason && (
+                            <span className="text-red-500 font-medium">
+                              {candidate.unavailabilityReason}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+
+                    {candidate.isAvailable && (
+                      <div className="text-right">
+                        <p className="text-2xl font-bold text-rose-500">{candidate.totalScore}</p>
+                        <p className="text-xs text-gray-400">综合得分</p>
+                      </div>
+                    )}
+                  </div>
+
+                  {candidate.isAvailable && (
+                    <div className="mt-3 pt-3 border-t border-gray-50 grid grid-cols-4 gap-3">
+                      <div>
+                        <p className="text-xs text-gray-400">近7天负载</p>
+                        <p className="text-sm font-semibold text-gray-700 mt-0.5">
+                          {candidate.weekLoad} 单
+                        </p>
+                      </div>
+                      <div>
+                        <p className="text-xs text-gray-400">等级评分</p>
+                        <p className="text-sm font-semibold text-gray-700 mt-0.5">
+                          {candidate.levelScore * 10} 分
+                        </p>
+                      </div>
+                      <div>
+                        <p className="text-xs text-gray-400">负载评分</p>
+                        <p className="text-sm font-semibold text-gray-700 mt-0.5">
+                          {(7 - Math.min(candidate.weekLoad, 6)) * 10} 分
+                        </p>
+                      </div>
+                      <div>
+                        <p className="text-xs text-gray-400">当日档期</p>
+                        <p className="text-sm font-semibold text-green-600 mt-0.5">
+                          {candidate.daySchedule.length === 0 ? '空闲' : `${candidate.daySchedule.length}项安排`}
+                        </p>
+                      </div>
+                    </div>
+                  )}
+
+                  {candidate.isAvailable && (
+                    <div className="mt-3 flex justify-end">
+                      <button
+                        onClick={() => handleConfirmAssign(candidate.florist.id)}
+                        disabled={confirmingId === candidate.florist.id}
+                        className="btn-primary text-sm flex items-center gap-1 disabled:opacity-50"
+                      >
+                        {confirmingId === candidate.florist.id ? (
+                          <>
+                            <Loader className="w-4 h-4 animate-spin" />
+                            分配中...
+                          </>
+                        ) : (
+                          <>
+                            <CheckCircle className="w-4 h-4" />
+                            确认分配
+                          </>
+                        )}
+                      </button>
+                    </div>
+                  )}
+                </div>
+              ))}
+
+              {candidates.length === 0 && (
+                <div className="text-center py-8">
+                  <User className="w-12 h-12 text-gray-200 mx-auto mb-3" />
+                  <p className="text-gray-400">没有找到花艺师</p>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       {showOrderModal && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">

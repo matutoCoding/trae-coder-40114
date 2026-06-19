@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Plus, Edit2, Trash2, ChevronLeft, ChevronRight, User, Calendar } from 'lucide-react';
+import { Plus, Edit2, Trash2, ChevronLeft, ChevronRight, User, Calendar, LayoutGrid, List } from 'lucide-react';
 import {
   format,
   startOfMonth,
@@ -10,6 +10,10 @@ import {
   addMonths,
   subMonths,
   isToday,
+  startOfWeek,
+  endOfWeek,
+  addWeeks,
+  subWeeks,
 } from 'date-fns';
 import { zhCN } from 'date-fns/locale';
 import { useAppStore } from '../store/useAppStore';
@@ -29,16 +33,23 @@ const levelColors = {
 
 const scheduleTypeLabels = {
   available: '空闲',
-  booked: '已接单',
+  booked: '婚礼',
   leave: '休假',
-  recovery: '撤场回收',
+  recovery: '撤场',
 };
 
 const scheduleTypeColors = {
-  available: 'bg-green-100 text-green-700',
-  booked: 'bg-rose-100 text-rose-700',
-  leave: 'bg-gray-100 text-gray-700',
-  recovery: 'bg-champagne-100 text-champagne-700',
+  available: 'bg-green-100 text-green-700 border-green-200',
+  booked: 'bg-rose-100 text-rose-700 border-rose-200',
+  leave: 'bg-gray-100 text-gray-500 border-gray-200',
+  recovery: 'bg-champagne-100 text-champagne-700 border-champagne-200',
+};
+
+const scheduleTypeDotColors = {
+  available: 'bg-green-400',
+  booked: 'bg-rose-400',
+  leave: 'bg-gray-400',
+  recovery: 'bg-champagne-400',
 };
 
 function ScheduleModule() {
@@ -51,6 +62,8 @@ function ScheduleModule() {
   const [selectedFlorist, setSelectedFlorist] = useState<string>('');
   const [scheduleType, setScheduleType] = useState<'available' | 'booked' | 'leave' | 'recovery'>('available');
   const [scheduleNotes, setScheduleNotes] = useState('');
+  const [viewMode, setViewMode] = useState<'month' | 'week'>('week');
+  const [currentWeekStart, setCurrentWeekStart] = useState(startOfWeek(new Date(), { weekStartsOn: 1 }));
   const [floristForm, setFloristForm] = useState({
     name: '',
     phone: '',
@@ -66,6 +79,10 @@ function ScheduleModule() {
 
   const weekDays = ['日', '一', '二', '三', '四', '五', '六'];
 
+  const weekStart = currentWeekStart;
+  const weekEnd = endOfWeek(weekStart, { weekStartsOn: 1 });
+  const weekDaysList = eachDayOfInterval({ start: weekStart, end: weekEnd });
+
   const getDateSchedules = (date: Date) => {
     const dateStr = format(date, 'yyyy-MM-dd');
     return schedules.filter((s) => s.date === dateStr);
@@ -73,6 +90,10 @@ function ScheduleModule() {
 
   const getFloristName = (floristId: string) => {
     return florists.find((f) => f.id === floristId)?.name || '未知';
+  };
+
+  const getFloristScheduleForDate = (floristId: string, dateStr: string): ScheduleItem | undefined => {
+    return schedules.find((s) => s.floristId === floristId && s.date === dateStr);
   };
 
   const handleAddFlorist = () => {
@@ -148,249 +169,412 @@ function ScheduleModule() {
     }
   };
 
+  const handleWeekCellClick = (floristId: string, dateStr: string) => {
+    setSelectedFlorist(floristId);
+    setSelectedDate(dateStr);
+    const existing = getFloristScheduleForDate(floristId, dateStr);
+    if (existing) {
+      return;
+    }
+    setShowScheduleModal(true);
+  };
+
   const selectedDateSchedules = schedules.filter((s) => s.date === selectedDate);
+
+  const activeFlorists = florists.filter((f) => f.status === 'active');
 
   return (
     <div className="space-y-6">
-      <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
-        <div className="lg:col-span-1 space-y-4">
-          <div className="card">
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="font-semibold text-gray-800">花艺师列表</h3>
+      <div className="flex items-center gap-2 mb-2">
+        <button
+          onClick={() => setViewMode('week')}
+          className={`flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-lg transition-colors ${
+            viewMode === 'week' ? 'bg-rose-500 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+          }`}
+        >
+          <LayoutGrid className="w-4 h-4" />
+          周视图
+        </button>
+        <button
+          onClick={() => setViewMode('month')}
+          className={`flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-lg transition-colors ${
+            viewMode === 'month' ? 'bg-rose-500 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+          }`}
+        >
+          <List className="w-4 h-4" />
+          月视图
+        </button>
+      </div>
+
+      {viewMode === 'week' && (
+        <div className="card">
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="font-semibold text-gray-800">
+              {format(weekStart, 'yyyy年M月d日', { locale: zhCN })} - {format(weekEnd, 'M月d日', { locale: zhCN })}
+            </h3>
+            <div className="flex items-center gap-2">
               <button
-                onClick={handleAddFlorist}
-                className="p-1.5 bg-rose-50 text-rose-600 rounded-lg hover:bg-rose-100 transition-colors"
+                onClick={() => setCurrentWeekStart(subWeeks(weekStart, 1))}
+                className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
               >
-                <Plus className="w-4 h-4" />
+                <ChevronLeft className="w-5 h-5 text-gray-600" />
+              </button>
+              <button
+                onClick={() => setCurrentWeekStart(startOfWeek(new Date(), { weekStartsOn: 1 }))}
+                className="px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-100 rounded-lg transition-colors"
+              >
+                本周
+              </button>
+              <button
+                onClick={() => setCurrentWeekStart(addWeeks(weekStart, 1))}
+                className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
+              >
+                <ChevronRight className="w-5 h-5 text-gray-600" />
               </button>
             </div>
-            <div className="space-y-2">
-              {florists.map((florist) => (
-                <div
-                  key={florist.id}
-                  className="p-3 rounded-lg border border-gray-100 hover:border-rose-200 hover:bg-rose-50/30 transition-all cursor-pointer"
-                >
-                  <div className="flex items-start gap-3">
-                    <div className="w-10 h-10 bg-gradient-to-br from-rose-100 to-champagne-100 rounded-full flex items-center justify-center text-xl">
-                      {florist.avatar}
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2">
-                        <p className="font-medium text-gray-800 text-sm truncate">{florist.name}</p>
-                        {florist.status === 'active' ? (
-                          <span className="w-2 h-2 bg-green-500 rounded-full"></span>
-                        ) : (
-                          <span className="w-2 h-2 bg-gray-300 rounded-full"></span>
-                        )}
-                      </div>
-                      <div className="flex items-center gap-2 mt-1">
-                        <span className={`badge ${levelColors[florist.level]}`}>
-                          {levelLabels[florist.level]}
-                        </span>
-                      </div>
-                      <p className="text-xs text-gray-400 mt-1">
-                        本月 {florist.totalOrders} 单 · ¥{florist.monthlySales.toLocaleString()}
-                      </p>
-                    </div>
-                  </div>
-                  <div className="flex gap-2 mt-3 pt-3 border-t border-gray-50">
-                    <button
-                      onClick={() => handleEditFlorist(florist)}
-                      className="flex-1 py-1.5 text-xs text-gray-500 hover:text-rose-600 transition-colors"
-                    >
-                      <Edit2 className="w-3 h-3 inline mr-1" />
-                      编辑
-                    </button>
-                    <button
-                      onClick={() => handleDeleteFlorist(florist.id)}
-                      className="flex-1 py-1.5 text-xs text-gray-500 hover:text-red-600 transition-colors"
-                    >
-                      <Trash2 className="w-3 h-3 inline mr-1" />
-                      删除
-                    </button>
-                  </div>
-                </div>
-              ))}
-            </div>
           </div>
 
-          <div className="card">
-            <h3 className="font-semibold text-gray-800 mb-3">档期类型说明</h3>
-            <div className="space-y-2">
-              {Object.entries(scheduleTypeLabels).map(([key, label]) => (
-                <div key={key} className="flex items-center gap-2">
-                  <span className={`w-3 h-3 rounded-full ${scheduleTypeColors[key as keyof typeof scheduleTypeColors]}`}></span>
-                  <span className="text-sm text-gray-600">{label}</span>
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
-
-        <div className="lg:col-span-3 space-y-4">
-          <div className="card">
-            <div className="flex items-center justify-between mb-6">
-              <h3 className="font-semibold text-gray-800">
-                {format(currentMonth, 'yyyy年M月', { locale: zhCN })}
-              </h3>
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={() => setCurrentMonth(subMonths(currentMonth, 1))}
-                  className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
-                >
-                  <ChevronLeft className="w-5 h-5 text-gray-600" />
-                </button>
-                <button
-                  onClick={() => setCurrentMonth(new Date())}
-                  className="px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-100 rounded-lg transition-colors"
-                >
-                  今天
-                </button>
-                <button
-                  onClick={() => setCurrentMonth(addMonths(currentMonth, 1))}
-                  className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
-                >
-                  <ChevronRight className="w-5 h-5 text-gray-600" />
-                </button>
-              </div>
-            </div>
-
-            <div className="grid grid-cols-7 gap-1 mb-2">
-              {weekDays.map((day) => (
-                <div
-                  key={day}
-                  className="text-center text-sm font-medium text-gray-500 py-2"
-                >
-                  {day}
-                </div>
-              ))}
-            </div>
-
-            <div className="grid grid-cols-7 gap-1">
-              {Array.from({ length: monthStart.getDay() }).map((_, i) => (
-                <div key={`empty-${i}`} className="h-24"></div>
-              ))}
-              {days.map((day) => {
-                const daySchedules = getDateSchedules(day);
-                const dateStr = format(day, 'yyyy-MM-dd');
-                const isSelected = isSameDay(day, new Date(selectedDate));
-                const isCurrentMonth = isSameMonth(day, currentMonth);
-                const isTodayDate = isToday(day);
-
-                return (
-                  <div
-                    key={dateStr}
-                    onClick={() => setSelectedDate(dateStr)}
-                    className={`h-24 p-2 border rounded-lg cursor-pointer transition-all ${
-                      isSelected
-                        ? 'border-rose-400 bg-rose-50 ring-2 ring-rose-200'
-                        : 'border-gray-100 hover:border-rose-200 hover:bg-rose-50/30'
-                    } ${!isCurrentMonth ? 'opacity-40' : ''}`}
-                  >
-                    <div className="flex items-center justify-between">
-                      <span
-                        className={`text-sm ${
-                          isTodayDate
-                            ? 'w-6 h-6 bg-rose-500 text-white rounded-full flex items-center justify-center text-xs font-medium'
-                            : 'text-gray-700'
+          <div className="overflow-x-auto">
+            <table className="w-full border-collapse">
+              <thead>
+                <tr>
+                  <th className="text-left py-2 px-3 text-sm font-medium text-gray-500 border-b border-gray-100 w-32 sticky left-0 bg-white z-10">
+                    花艺师
+                  </th>
+                  {weekDaysList.map((day) => {
+                    const dateStr = format(day, 'yyyy-MM-dd');
+                    const isTodayDate = isToday(day);
+                    return (
+                      <th
+                        key={dateStr}
+                        className={`text-center py-2 px-2 text-sm font-medium border-b border-gray-100 min-w-[100px] ${
+                          isTodayDate ? 'text-rose-600' : 'text-gray-500'
                         }`}
                       >
-                        {format(day, 'd')}
-                      </span>
-                      {daySchedules.length > 0 && (
-                        <span className="text-xs text-gray-400">
-                          {daySchedules.length}项
-                        </span>
-                      )}
-                    </div>
-                    <div className="mt-1 space-y-0.5 overflow-hidden">
-                      {daySchedules.slice(0, 2).map((schedule) => (
-                        <div
-                          key={schedule.id}
-                          className={`text-xs px-1 py-0.5 rounded truncate ${scheduleTypeColors[schedule.type]}`}
+                        <div>{format(day, 'E', { locale: zhCN })}</div>
+                        <div className={`text-lg ${isTodayDate ? 'font-bold' : ''}`}>
+                          {format(day, 'd')}
+                        </div>
+                      </th>
+                    );
+                  })}
+                </tr>
+              </thead>
+              <tbody>
+                {activeFlorists.map((florist) => (
+                  <tr key={florist.id} className="hover:bg-gray-50">
+                    <td className="py-2 px-3 border-b border-gray-50 sticky left-0 bg-white z-10">
+                      <div className="flex items-center gap-2">
+                        <div className="w-8 h-8 bg-gradient-to-br from-rose-100 to-champagne-100 rounded-full flex items-center justify-center text-base">
+                          {florist.avatar}
+                        </div>
+                        <div>
+                          <p className="text-sm font-medium text-gray-800 truncate max-w-[80px]">{florist.name}</p>
+                          <p className="text-xs text-gray-400">{levelLabels[florist.level]}</p>
+                        </div>
+                      </div>
+                    </td>
+                    {weekDaysList.map((day) => {
+                      const dateStr = format(day, 'yyyy-MM-dd');
+                      const schedule = getFloristScheduleForDate(florist.id, dateStr);
+                      const isTodayDate = isToday(day);
+                      const isSelected = dateStr === selectedDate;
+
+                      return (
+                        <td
+                          key={dateStr}
+                          onClick={() => handleWeekCellClick(florist.id, dateStr)}
+                          className={`py-2 px-2 border-b border-gray-50 text-center cursor-pointer transition-all ${
+                            isSelected ? 'bg-rose-50 ring-2 ring-rose-200' : 'hover:bg-gray-50'
+                          } ${isTodayDate ? 'bg-rose-50/30' : ''}`}
                         >
-                          {getFloristName(schedule.floristId)}
+                          {schedule ? (
+                            <div
+                              className={`inline-flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-medium border ${scheduleTypeColors[schedule.type]}`}
+                                            >
+                              <span className={`w-1.5 h-1.5 rounded-full ${scheduleTypeDotColors[schedule.type]}`} />
+                              {scheduleTypeLabels[schedule.type]}
+                            </div>
+                          ) : (
+                            <div className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-xs text-gray-300 border border-dashed border-gray-200">
+                              空闲
+                            </div>
+                          )}
+                        </td>
+                      );
+                    })}
+                  </tr>
+                ))}
+                {activeFlorists.length === 0 && (
+                  <tr>
+                    <td colSpan={8} className="py-12 text-center text-gray-400">
+                      暂无在职花艺师
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+
+          <div className="mt-4 flex items-center gap-4 text-xs text-gray-400">
+            <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-green-400" /> 空闲</span>
+            <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-rose-400" /> 婚礼</span>
+            <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-champagne-400" /> 撤场</span>
+            <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-gray-400" /> 休假</span>
+          </div>
+
+          <div className="mt-4 p-3 bg-amber-50 rounded-lg">
+            <p className="text-sm text-amber-700">
+              💡 点击空白格子可快速为花艺师添加档期，婚礼/撤场/休假日期的花艺师不会出现在智能分配的候选列表中
+            </p>
+          </div>
+        </div>
+      )}
+
+      {viewMode === 'month' && (
+        <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
+          <div className="lg:col-span-1 space-y-4">
+            <div className="card">
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="font-semibold text-gray-800">花艺师列表</h3>
+                <button
+                  onClick={handleAddFlorist}
+                  className="p-1.5 bg-rose-50 text-rose-600 rounded-lg hover:bg-rose-100 transition-colors"
+                >
+                  <Plus className="w-4 h-4" />
+                </button>
+              </div>
+              <div className="space-y-2">
+                {florists.map((florist) => (
+                  <div
+                    key={florist.id}
+                    className="p-3 rounded-lg border border-gray-100 hover:border-rose-200 hover:bg-rose-50/30 transition-all cursor-pointer"
+                  >
+                    <div className="flex items-start gap-3">
+                      <div className="w-10 h-10 bg-gradient-to-br from-rose-100 to-champagne-100 rounded-full flex items-center justify-center text-xl">
+                        {florist.avatar}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2">
+                          <p className="font-medium text-gray-800 text-sm truncate">{florist.name}</p>
+                          {florist.status === 'active' ? (
+                            <span className="w-2 h-2 bg-green-500 rounded-full"></span>
+                          ) : (
+                            <span className="w-2 h-2 bg-gray-300 rounded-full"></span>
+                          )}
                         </div>
-                      ))}
-                      {daySchedules.length > 2 && (
-                        <div className="text-xs text-gray-400 px-1">
-                          +{daySchedules.length - 2} 更多
+                        <div className="flex items-center gap-2 mt-1">
+                          <span className={`badge ${levelColors[florist.level]}`}>
+                            {levelLabels[florist.level]}
+                          </span>
                         </div>
-                      )}
+                        <p className="text-xs text-gray-400 mt-1">
+                          本月 {florist.totalOrders} 单 · ¥{florist.monthlySales.toLocaleString()}
+                        </p>
+                      </div>
+                    </div>
+                    <div className="flex gap-2 mt-3 pt-3 border-t border-gray-50">
+                      <button
+                        onClick={() => handleEditFlorist(florist)}
+                        className="flex-1 py-1.5 text-xs text-gray-500 hover:text-rose-600 transition-colors"
+                      >
+                        <Edit2 className="w-3 h-3 inline mr-1" />
+                        编辑
+                      </button>
+                      <button
+                        onClick={() => handleDeleteFlorist(florist.id)}
+                        className="flex-1 py-1.5 text-xs text-gray-500 hover:text-red-600 transition-colors"
+                      >
+                        <Trash2 className="w-3 h-3 inline mr-1" />
+                        删除
+                      </button>
                     </div>
                   </div>
-                );
-              })}
+                ))}
+              </div>
+            </div>
+
+            <div className="card">
+              <h3 className="font-semibold text-gray-800 mb-3">档期类型说明</h3>
+              <div className="space-y-2">
+                {Object.entries(scheduleTypeLabels).map(([key, label]) => (
+                  <div key={key} className="flex items-center gap-2">
+                    <span className={`w-3 h-3 rounded-full ${scheduleTypeDotColors[key as keyof typeof scheduleTypeDotColors]}`}></span>
+                    <span className="text-sm text-gray-600">{label}</span>
+                  </div>
+                ))}
+              </div>
             </div>
           </div>
 
-          <div className="card">
-            <div className="flex items-center justify-between mb-4">
-              <div>
+          <div className="lg:col-span-3 space-y-4">
+            <div className="card">
+              <div className="flex items-center justify-between mb-6">
                 <h3 className="font-semibold text-gray-800">
-                  {selectedDate} 档期详情
+                  {format(currentMonth, 'yyyy年M月', { locale: zhCN })}
                 </h3>
-                <p className="text-sm text-gray-500 mt-0.5">
-                  共 {selectedDateSchedules.length} 项档期安排
-                </p>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => setCurrentMonth(subMonths(currentMonth, 1))}
+                    className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
+                  >
+                    <ChevronLeft className="w-5 h-5 text-gray-600" />
+                  </button>
+                  <button
+                    onClick={() => setCurrentMonth(new Date())}
+                    className="px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-100 rounded-lg transition-colors"
+                  >
+                    今天
+                  </button>
+                  <button
+                    onClick={() => setCurrentMonth(addMonths(currentMonth, 1))}
+                    className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
+                  >
+                    <ChevronRight className="w-5 h-5 text-gray-600" />
+                  </button>
+                </div>
               </div>
-              <button
-                onClick={() => setShowScheduleModal(true)}
-                className="btn-primary text-sm flex items-center gap-1"
-              >
-                <Plus className="w-4 h-4" />
-                添加档期
-              </button>
-            </div>
 
-            {selectedDateSchedules.length === 0 ? (
-              <div className="text-center py-12">
-                <Calendar className="w-12 h-12 text-gray-300 mx-auto mb-3" />
-                <p className="text-gray-400">当日暂无档期安排</p>
+              <div className="grid grid-cols-7 gap-1 mb-2">
+                {weekDays.map((day) => (
+                  <div
+                    key={day}
+                    className="text-center text-sm font-medium text-gray-500 py-2"
+                  >
+                    {day}
+                  </div>
+                ))}
               </div>
-            ) : (
-              <div className="space-y-3">
-                {selectedDateSchedules.map((schedule) => {
-                  const florist = florists.find((f) => f.id === schedule.floristId);
+
+              <div className="grid grid-cols-7 gap-1">
+                {Array.from({ length: monthStart.getDay() }).map((_, i) => (
+                  <div key={`empty-${i}`} className="h-24"></div>
+                ))}
+                {days.map((day) => {
+                  const daySchedules = getDateSchedules(day);
+                  const dateStr = format(day, 'yyyy-MM-dd');
+                  const isSelected = isSameDay(day, new Date(selectedDate));
+                  const isCurrentMonth = isSameMonth(day, currentMonth);
+                  const isTodayDate = isToday(day);
+
                   return (
                     <div
-                      key={schedule.id}
-                      className="flex items-center justify-between p-4 bg-gray-50 rounded-lg"
+                      key={dateStr}
+                      onClick={() => setSelectedDate(dateStr)}
+                      className={`h-24 p-2 border rounded-lg cursor-pointer transition-all ${
+                        isSelected
+                          ? 'border-rose-400 bg-rose-50 ring-2 ring-rose-200'
+                          : 'border-gray-100 hover:border-rose-200 hover:bg-rose-50/30'
+                      } ${!isCurrentMonth ? 'opacity-40' : ''}`}
                     >
-                      <div className="flex items-center gap-4">
-                        <div className="w-10 h-10 bg-white rounded-full flex items-center justify-center text-xl shadow-sm">
-                          {florist?.avatar || '👤'}
-                        </div>
-                        <div>
-                          <p className="font-medium text-gray-800">
-                            {florist?.name || '未知花艺师'}
-                          </p>
-                          <div className="flex items-center gap-2 mt-1">
-                            <span className={`badge ${scheduleTypeColors[schedule.type]}`}>
-                              {scheduleTypeLabels[schedule.type]}
-                            </span>
-                            {schedule.notes && (
-                              <span className="text-sm text-gray-500">
-                                {schedule.notes}
-                              </span>
-                            )}
-                          </div>
-                        </div>
+                      <div className="flex items-center justify-between">
+                        <span
+                          className={`text-sm ${
+                            isTodayDate
+                              ? 'w-6 h-6 bg-rose-500 text-white rounded-full flex items-center justify-center text-xs font-medium'
+                              : 'text-gray-700'
+                          }`}
+                        >
+                          {format(day, 'd')}
+                        </span>
+                        {daySchedules.length > 0 && (
+                          <span className="text-xs text-gray-400">
+                            {daySchedules.length}项
+                          </span>
+                        )}
                       </div>
-                      <button
-                        onClick={() => handleDeleteSchedule(schedule.id)}
-                        className="p-2 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </button>
+                      <div className="mt-1 space-y-0.5 overflow-hidden">
+                        {daySchedules.slice(0, 2).map((schedule) => (
+                          <div
+                            key={schedule.id}
+                            className={`text-xs px-1 py-0.5 rounded truncate ${scheduleTypeColors[schedule.type]}`}
+                          >
+                            {getFloristName(schedule.floristId)}
+                          </div>
+                        ))}
+                        {daySchedules.length > 2 && (
+                          <div className="text-xs text-gray-400 px-1">
+                            +{daySchedules.length - 2} 更多
+                          </div>
+                        )}
+                      </div>
                     </div>
                   );
                 })}
               </div>
-            )}
+            </div>
+
+            <div className="card">
+              <div className="flex items-center justify-between mb-4">
+                <div>
+                  <h3 className="font-semibold text-gray-800">
+                    {selectedDate} 档期详情
+                  </h3>
+                  <p className="text-sm text-gray-500 mt-0.5">
+                    共 {selectedDateSchedules.length} 项档期安排
+                  </p>
+                </div>
+                <button
+                  onClick={() => {
+                    setSelectedFlorist('');
+                    setShowScheduleModal(true);
+                  }}
+                  className="btn-primary text-sm flex items-center gap-1"
+                >
+                  <Plus className="w-4 h-4" />
+                  添加档期
+                </button>
+              </div>
+
+              {selectedDateSchedules.length === 0 ? (
+                <div className="text-center py-12">
+                  <Calendar className="w-12 h-12 text-gray-300 mx-auto mb-3" />
+                  <p className="text-gray-400">当日暂无档期安排</p>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {selectedDateSchedules.map((schedule) => {
+                    const florist = florists.find((f) => f.id === schedule.floristId);
+                    return (
+                      <div
+                        key={schedule.id}
+                        className="flex items-center justify-between p-4 bg-gray-50 rounded-lg"
+                      >
+                        <div className="flex items-center gap-4">
+                          <div className="w-10 h-10 bg-white rounded-full flex items-center justify-center text-xl shadow-sm">
+                            {florist?.avatar || '👤'}
+                          </div>
+                          <div>
+                            <p className="font-medium text-gray-800">
+                              {florist?.name || '未知花艺师'}
+                            </p>
+                            <div className="flex items-center gap-2 mt-1">
+                              <span className={`badge ${scheduleTypeColors[schedule.type]}`}>
+                                {scheduleTypeLabels[schedule.type]}
+                              </span>
+                              {schedule.notes && (
+                                <span className="text-sm text-gray-500">
+                                  {schedule.notes}
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                        <button
+                          onClick={() => handleDeleteSchedule(schedule.id)}
+                          className="p-2 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
           </div>
         </div>
-      </div>
+      )}
 
       {showFloristModal && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">

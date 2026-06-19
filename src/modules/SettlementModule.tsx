@@ -1,7 +1,8 @@
 import { useState } from 'react';
-import { FileText, CheckCircle, Clock, TrendingUp, DollarSign, Calendar, RefreshCw, Package, ChevronRight } from 'lucide-react';
+import { FileText, CheckCircle, Clock, DollarSign, Calendar, RefreshCw, Package, Download, Filter } from 'lucide-react';
 import { useAppStore } from '../store/useAppStore';
 import { format } from 'date-fns';
+import { zhCN } from 'date-fns/locale';
 
 const statusLabels = {
   pending: '待结算',
@@ -23,21 +24,26 @@ function SettlementModule() {
   const [showCompleteModal, setShowCompleteModal] = useState(false);
   const [selectedOrderId, setSelectedOrderId] = useState('');
   const [recoveryDate, setRecoveryDate] = useState('');
-  const [settlementFilter, setSettlementFilter] = useState<'all' | 'pending' | 'settled'>('all');
   const [selectedMonth, setSelectedMonth] = useState(format(new Date(), 'yyyy-MM'));
+  const [filterFlorist, setFilterFlorist] = useState<string>('all');
+  const [filterStatus, setFilterStatus] = useState<'all' | 'pending' | 'settled'>('all');
 
   const assignedOrders = orders.filter((o) => o.status === 'assigned' || o.status === 'in_progress');
   const completedOrders = orders.filter((o) => o.status === 'completed');
 
   const monthlyStats = getMonthlyStats(selectedMonth);
 
-  const pendingSettlements = settlements.filter((s) => s.status === 'pending');
-  const settledSettlements = settlements.filter((s) => s.status === 'settled');
-
   const filteredSettlements = settlements.filter((s) => {
-    if (settlementFilter === 'all') return true;
-    return s.status === settlementFilter;
+    if (filterStatus !== 'all' && s.status !== filterStatus) return false;
+    if (filterFlorist !== 'all' && s.floristId !== filterFlorist) return false;
+    if (s.settlementDate.startsWith(selectedMonth)) return true;
+    return false;
   });
+
+  const pendingSettlements = filteredSettlements.filter((s) => s.status === 'pending');
+  const settledSettlements = filteredSettlements.filter((s) => s.status === 'settled');
+  const totalPendingAmount = pendingSettlements.reduce((sum, s) => sum + s.commissionAmount, 0);
+  const totalSettledAmount = settledSettlements.reduce((sum, s) => sum + s.commissionAmount, 0);
 
   const handleCompleteClick = (orderId: string) => {
     setSelectedOrderId(orderId);
@@ -61,12 +67,38 @@ function SettlementModule() {
     updateSettlement(settlementId, { status: 'settled' });
   };
 
-  const getOrderInfo = (orderId: string) => {
-    return orders.find((o) => o.id === orderId);
-  };
+  const handleExportCSV = () => {
+    const headers = ['订单号', '花艺师', '类型', '订单金额', '抽成比例', '抽成金额', '平台收益', '结算日期', '回收日期', '结算状态'];
+    const rows = filteredSettlements.map((s) => [
+      s.orderNo,
+      s.floristName,
+      typeLabels[s.type],
+      s.amount,
+      `${(s.commissionRate * 100).toFixed(0)}%`,
+      s.commissionAmount,
+      s.platformAmount,
+      s.settlementDate,
+      s.recoveryDate || '',
+      statusLabels[s.status],
+    ]);
 
-  const totalPendingAmount = pendingSettlements.reduce((sum, s) => sum + s.commissionAmount, 0);
-  const totalSettledAmount = settledSettlements.reduce((sum, s) => sum + s.commissionAmount, 0);
+    const csvContent = [
+      headers.join(','),
+      ...rows.map((row) => row.map((cell) => {
+        const str = String(cell);
+        return str.includes(',') ? `"${str}"` : str;
+      }).join(',')),
+    ].join('\n');
+
+    const BOM = '\uFEFF';
+    const blob = new Blob([BOM + csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `结算明细_${selectedMonth}.csv`;
+    link.click();
+    URL.revokeObjectURL(url);
+  };
 
   return (
     <div className="space-y-6">
@@ -178,12 +210,14 @@ function SettlementModule() {
       </div>
 
       <div className="card">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
+        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 mb-6">
           <div>
             <h3 className="font-semibold text-gray-800 text-lg">结算明细</h3>
-            <p className="text-sm text-gray-500 mt-0.5">所有订单的分账明细记录</p>
+            <p className="text-sm text-gray-500 mt-0.5">
+              {format(new Date(selectedMonth + '-01'), 'yyyy年M月', { locale: zhCN })} 分账明细记录
+            </p>
           </div>
-          <div className="flex items-center gap-3">
+          <div className="flex flex-wrap items-center gap-3">
             <div className="flex items-center gap-2">
               <Calendar className="w-4 h-4 text-gray-400" />
               <input
@@ -193,13 +227,23 @@ function SettlementModule() {
                 className="input-field text-sm py-1.5 w-36"
               />
             </div>
+            <select
+              value={filterFlorist}
+              onChange={(e) => setFilterFlorist(e.target.value)}
+              className="input-field text-sm py-1.5 w-28"
+            >
+              <option value="all">全部花艺师</option>
+              {florists.map((f) => (
+                <option key={f.id} value={f.id}>{f.name}</option>
+              ))}
+            </select>
             <div className="flex gap-1 bg-gray-100 rounded-lg p-1">
               {(['all', 'pending', 'settled'] as const).map((status) => (
                 <button
                   key={status}
-                  onClick={() => setSettlementFilter(status)}
+                  onClick={() => setFilterStatus(status)}
                   className={`px-3 py-1 text-sm rounded-md transition-colors ${
-                    settlementFilter === status
+                    filterStatus === status
                       ? 'bg-white text-gray-800 shadow-sm'
                       : 'text-gray-500 hover:text-gray-700'
                   }`}
@@ -208,6 +252,14 @@ function SettlementModule() {
                 </button>
               ))}
             </div>
+            <button
+              onClick={handleExportCSV}
+              disabled={filteredSettlements.length === 0}
+              className="flex items-center gap-2 px-3 py-1.5 text-sm bg-green-50 text-green-700 rounded-lg hover:bg-green-100 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              <Download className="w-4 h-4" />
+              导出CSV
+            </button>
           </div>
         </div>
 
@@ -222,25 +274,26 @@ function SettlementModule() {
             <table className="w-full">
               <thead>
                 <tr className="border-b border-gray-100">
-                  <th className="text-left py-3 px-4 text-sm font-medium text-gray-500">订单号</th>
-                  <th className="text-left py-3 px-4 text-sm font-medium text-gray-500">花艺师</th>
-                  <th className="text-left py-3 px-4 text-sm font-medium text-gray-500">类型</th>
-                  <th className="text-right py-3 px-4 text-sm font-medium text-gray-500">订单金额</th>
-                  <th className="text-right py-3 px-4 text-sm font-medium text-gray-500">抽成比例</th>
-                  <th className="text-right py-3 px-4 text-sm font-medium text-gray-500">抽成金额</th>
-                  <th className="text-right py-3 px-4 text-sm font-medium text-gray-500">平台收益</th>
-                  <th className="text-left py-3 px-4 text-sm font-medium text-gray-500">结算日期</th>
-                  <th className="text-center py-3 px-4 text-sm font-medium text-gray-500">状态</th>
-                  <th className="text-right py-3 px-4 text-sm font-medium text-gray-500">操作</th>
+                  <th className="text-left py-3 px-3 text-sm font-medium text-gray-500">订单号</th>
+                  <th className="text-left py-3 px-3 text-sm font-medium text-gray-500">花艺师</th>
+                  <th className="text-left py-3 px-3 text-sm font-medium text-gray-500">类型</th>
+                  <th className="text-right py-3 px-3 text-sm font-medium text-gray-500">订单金额</th>
+                  <th className="text-right py-3 px-3 text-sm font-medium text-gray-500">抽成比例</th>
+                  <th className="text-right py-3 px-3 text-sm font-medium text-gray-500">抽成金额</th>
+                  <th className="text-right py-3 px-3 text-sm font-medium text-gray-500">平台收益</th>
+                  <th className="text-left py-3 px-3 text-sm font-medium text-gray-500">结算日期</th>
+                  <th className="text-left py-3 px-3 text-sm font-medium text-gray-500">回收日期</th>
+                  <th className="text-center py-3 px-3 text-sm font-medium text-gray-500">状态</th>
+                  <th className="text-right py-3 px-3 text-sm font-medium text-gray-500">操作</th>
                 </tr>
               </thead>
               <tbody>
                 {filteredSettlements.map((settlement) => (
                   <tr key={settlement.id} className="border-b border-gray-50 hover:bg-gray-50">
-                    <td className="py-4 px-4">
+                    <td className="py-3 px-3">
                       <span className="text-sm font-mono text-gray-600">{settlement.orderNo}</span>
                     </td>
-                    <td className="py-4 px-4">
+                    <td className="py-3 px-3">
                       <div className="flex items-center gap-2">
                         <div className="w-7 h-7 bg-gradient-to-br from-rose-100 to-champagne-100 rounded-full flex items-center justify-center text-sm">
                           {florists.find((f) => f.id === settlement.floristId)?.avatar || '🌸'}
@@ -248,36 +301,43 @@ function SettlementModule() {
                         <span className="text-sm text-gray-700">{settlement.floristName}</span>
                       </div>
                     </td>
-                    <td className="py-4 px-4">
+                    <td className="py-3 px-3">
                       <span className="text-sm text-gray-600">{typeLabels[settlement.type]}</span>
                     </td>
-                    <td className="py-4 px-4 text-right">
+                    <td className="py-3 px-3 text-right">
                       <span className="text-sm text-gray-700">¥{settlement.amount.toLocaleString()}</span>
                     </td>
-                    <td className="py-4 px-4 text-right">
+                    <td className="py-3 px-3 text-right">
                       <span className="text-sm text-rose-500 font-medium">
                         {(settlement.commissionRate * 100).toFixed(0)}%
                       </span>
                     </td>
-                    <td className="py-4 px-4 text-right">
+                    <td className="py-3 px-3 text-right">
                       <span className="text-sm font-medium text-amber-600">
                         ¥{settlement.commissionAmount.toLocaleString()}
                       </span>
                     </td>
-                    <td className="py-4 px-4 text-right">
+                    <td className="py-3 px-3 text-right">
                       <span className="text-sm font-medium text-green-600">
                         ¥{settlement.platformAmount.toLocaleString()}
                       </span>
                     </td>
-                    <td className="py-4 px-4">
+                    <td className="py-3 px-3">
                       <span className="text-sm text-gray-500">{settlement.settlementDate}</span>
                     </td>
-                    <td className="py-4 px-4 text-center">
+                    <td className="py-3 px-3">
+                      {settlement.recoveryDate ? (
+                        <span className="text-sm text-champagne-600 font-medium">{settlement.recoveryDate}</span>
+                      ) : (
+                        <span className="text-sm text-gray-300">-</span>
+                      )}
+                    </td>
+                    <td className="py-3 px-3 text-center">
                       <span className={`badge ${statusColors[settlement.status]}`}>
                         {statusLabels[settlement.status]}
                       </span>
                     </td>
-                    <td className="py-4 px-4 text-right">
+                    <td className="py-3 px-3 text-right">
                       {settlement.status === 'pending' && (
                         <button
                           onClick={() => handleSettle(settlement.id)}
@@ -297,10 +357,12 @@ function SettlementModule() {
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <div className="card">
-          <h3 className="font-semibold text-gray-800 mb-4">撤场回收登记</h3>
+          <h3 className="font-semibold text-gray-800 mb-4">
+            {format(new Date(selectedMonth + '-01'), 'yyyy年M月', { locale: zhCN })} 撤场回收
+          </h3>
           <div className="space-y-3">
             {completedOrders
-              .filter((o) => o.recoveryDate)
+              .filter((o) => o.recoveryDate && o.recoveryDate.startsWith(selectedMonth))
               .map((order) => {
                 const florist = florists.find((f) => f.id === order.floristId);
                 return (
@@ -334,17 +396,19 @@ function SettlementModule() {
                   </div>
                 );
               })}
-            {completedOrders.filter((o) => o.recoveryDate).length === 0 && (
+            {completedOrders.filter((o) => o.recoveryDate && o.recoveryDate.startsWith(selectedMonth)).length === 0 && (
               <div className="text-center py-8">
                 <RefreshCw className="w-10 h-10 text-gray-200 mx-auto mb-2" />
-                <p className="text-sm text-gray-400">暂无撤场回收安排</p>
+                <p className="text-sm text-gray-400">本月暂无撤场回收安排</p>
               </div>
             )}
           </div>
         </div>
 
         <div className="card">
-          <h3 className="font-semibold text-gray-800 mb-4">月度财务汇总</h3>
+          <h3 className="font-semibold text-gray-800 mb-4">
+            {format(new Date(selectedMonth + '-01'), 'yyyy年M月', { locale: zhCN })} 财务汇总
+          </h3>
           <div className="space-y-4">
             <div className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
               <span className="text-gray-600">总订单数</span>
@@ -445,7 +509,7 @@ function SettlementModule() {
                   className="input-field"
                 />
                 <p className="text-xs text-gray-400 mt-1">
-                  设置后将自动添加到花艺师档期
+                  设置后将自动添加到花艺师档期，该日视为占用
                 </p>
               </div>
             </div>

@@ -1,7 +1,8 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
-import type { Florist, ScheduleItem, Order, CommissionTier, SettlementRecord } from '../types';
+import type { Florist, ScheduleItem, Order, CommissionTier, SettlementRecord, CandidateFlorist } from '../types';
 import { generateMockFlorists, generateMockSchedules, generateMockOrders, generateCommissionTiers } from '../data/mockData';
+import { format, addDays, subDays, parseISO } from 'date-fns';
 
 interface AppState {
   florists: Florist[];
@@ -25,9 +26,12 @@ interface AppState {
   updateOrder: (id: string, data: Partial<Order>) => void;
   deleteOrder: (id: string) => void;
   autoAssignOrder: (orderId: string) => { success: boolean; message: string; floristId?: string };
+  getCandidateFlorists: (orderId: string) => CandidateFlorist[];
+  confirmAssign: (orderId: string, floristId: string) => { success: boolean; message: string };
   
   getCommissionTier: (salesAmount: number) => CommissionTier | null;
-  calculateCommission: (floristId: string, amount: number) => { rate: number; amount: number };
+  calculateCommission: (floristId: string, amount: number, month?: string) => { rate: number; amount: number };
+  getMonthlyFloristSales: (floristId: string, month: string) => number;
   
   addSettlement: (settlement: Omit<SettlementRecord, 'id'>) => void;
   updateSettlement: (id: string, data: Partial<SettlementRecord>) => void;
@@ -48,6 +52,8 @@ interface AppState {
   
   completeOrder: (orderId: string, recoveryDate?: string) => void;
 }
+
+const OCCUPIED_TYPES: ScheduleItem['type'][] = ['booked', 'leave', 'recovery'];
 
 export const useAppStore = create<AppState>()(
   persist(
@@ -112,12 +118,12 @@ export const useAppStore = create<AppState>()(
       getAvailableFlorists: (date) => {
         const { florists, schedules } = get();
         const dateSchedules = schedules.filter((s) => s.date === date);
-        const bookedFloristIds = dateSchedules
-          .filter((s) => s.type === 'booked' || s.type === 'leave')
+        const occupiedFloristIds = dateSchedules
+          .filter((s) => OCCUPIED_TYPES.includes(s.type))
           .map((s) => s.floristId);
         
         return florists.filter(
-          (f) => f.status === 'active' && !bookedFloristIds.includes(f.id)
+          (f) => f.status === 'active' && !occupiedFloristIds.includes(f.id)
         );
       },
       
@@ -146,25 +152,118 @@ export const useAppStore = create<AppState>()(
         }));
       },
       
+      getCandidateFlorists: (orderId) => {
+        const { florists, schedules, orders } = get();
+        const order = orders.find((o) => o.id === orderId);
+        if (!order) return [];
+        
+        const weddingDate = order.weddingDate;
+        const activeFlorists = florists.filter((f) => f.status === 'active');
+        
+        const candidates: CandidateFlorist[] = activeFlorists.map((florist) => {
+          const daySchedule = schedules.filter(
+            (s) => s.floristId === florist.id && s.date === weddingDate
+          );
+          const occupiedItems = daySchedule.filter((s) => OCCUPIED_TYPES.includes(s.type));
+          const isAvailable = occupiedItems.length === 0;
+          
+          let unavailabilityReason: string | undefined;
+          if (!isAvailable) {
+            const types = occupiedItems.map((s) => s.type);
+            if (types.includes('booked')) unavailabilityReason = '当天有婚礼安排';
+            else if (types.includes('recovery')) unavailabilityReason = '当天有撤场回收';
+            else if (types.includes('leave')) unavailabilityReason = '当天休假';
+          }
+          
+          let weekLoad = 0;
+          try {
+            const weddingDateObj = parseISO(weddingDate);
+            for (let i = -3; i <= 3; i++) {
+              const checkDate = i < 0 ? format(addDays(weddingDateObj, i), 'yyyy-MM-dd') : i > 0 ? format(addDays(weddingDateObj, i), 'yyyy-MM-dd') : weddingDate;
+              const daySchedules = schedules.filter(
+                (s) => s.floristId === florist.id && s.date === checkDate && s.type === 'booked'
+              );
+              weekLoad += daySchedules.length;
+            }
+          } catch {
+            weekLoad = 0;
+          }
+          
+          const levelScore = florist.level === 'senior' ? 3 : florist.level === 'intermediate' ? 2 : 1;
+          const totalScore = isAvailable ? (7 - Math.min(weekLoad, 6)) * 10 + levelScore * 20 : 0;
+          
+          return {
+            florist,
+            isAvailable,
+            unavailabilityReason,
+            daySchedule,
+            weekLoad,
+            levelScore,
+            totalScore,
+            rank: 0,
+          };
+        });
+        
+        candidates.sort((a, b) => {
+          if (a.isAvailable !== b.isAvailable) return a.isAvailable ? -1 : 1;
+          return b.totalScore - a.totalScore;
+        });
+        
+        candidates.forEach((c, i) => {
+          c.rank = i + 1;
+        });
+        
+        return candidates;
+      },
+      
+      confirmAssign: (orderId, floristId) => {
+        const { orders, schedules } = get();
+        const order = orders.find((o) => o.id === orderId);
+        if (!order) return { success: false, message: '订单不存在' };
+        if (order.status !== 'pending') return { success: false, message: '订单状态不支持分配' };
+        
+        const dateSchedules = schedules.filter((s) => s.date === order.weddingDate);
+        const occupiedIds = dateSchedules
+          .filter((s) => OCCUPIED_TYPES.includes(s.type))
+          .map((s) => s.floristId);
+        if (occupiedIds.includes(floristId)) {
+          return { success: false, message: '该花艺师当日已有安排' };
+        }
+        
+        get().addSchedule({
+          floristId,
+          date: order.weddingDate,
+          type: 'booked',
+          orderId: order.id,
+          notes: `订单 ${order.orderNo}`,
+        });
+        
+        set((state) => ({
+          orders: state.orders.map((o) =>
+            o.id === orderId
+              ? { ...o, status: 'assigned', floristId, assignedAt: new Date().toISOString() }
+              : o
+          ),
+        }));
+        
+        const florist = get().florists.find((f) => f.id === floristId);
+        return { success: true, message: `已分配给 ${florist?.name || '花艺师'}` };
+      },
+      
       autoAssignOrder: (orderId) => {
         const { orders, florists, schedules, addSchedule } = get();
         const order = orders.find((o) => o.id === orderId);
         
-        if (!order) {
-          return { success: false, message: '订单不存在' };
-        }
-        
-        if (order.status !== 'pending') {
-          return { success: false, message: '订单状态不支持分配' };
-        }
+        if (!order) return { success: false, message: '订单不存在' };
+        if (order.status !== 'pending') return { success: false, message: '订单状态不支持分配' };
         
         const dateSchedules = schedules.filter((s) => s.date === order.weddingDate);
-        const bookedFloristIds = dateSchedules
-          .filter((s) => s.type === 'booked' || s.type === 'leave')
+        const occupiedFloristIds = dateSchedules
+          .filter((s) => OCCUPIED_TYPES.includes(s.type))
           .map((s) => s.floristId);
         
         const availableFlorists = florists.filter(
-          (f) => f.status === 'active' && !bookedFloristIds.includes(f.id)
+          (f) => f.status === 'active' && !occupiedFloristIds.includes(f.id)
         );
         
         if (availableFlorists.length === 0) {
@@ -218,12 +317,26 @@ export const useAppStore = create<AppState>()(
         return tiers[tiers.length - 1] || null;
       },
       
-      calculateCommission: (floristId, amount) => {
-        const { florists, getCommissionTier } = get();
+      getMonthlyFloristSales: (floristId, month) => {
+        const { orders } = get();
+        return orders
+          .filter(
+            (o) =>
+              o.floristId === floristId &&
+              o.weddingDate.startsWith(month) &&
+              o.status !== 'cancelled' &&
+              o.status !== 'pending'
+          )
+          .reduce((sum, o) => sum + o.amount, 0);
+      },
+      
+      calculateCommission: (floristId, amount, month?) => {
+        const { florists, getCommissionTier, getMonthlyFloristSales } = get();
         const florist = florists.find((f) => f.id === floristId);
         if (!florist) return { rate: 0, amount: 0 };
         
-        const projectedSales = florist.monthlySales + amount;
+        const currentSales = month ? getMonthlyFloristSales(floristId, month) : florist.monthlySales;
+        const projectedSales = currentSales + amount;
         const tier = getCommissionTier(projectedSales);
         const rate = tier ? tier.commissionRate : florist.baseCommissionRate;
         
@@ -247,7 +360,7 @@ export const useAppStore = create<AppState>()(
       getMonthlyStats: (month) => {
         const { orders, florists, getCommissionTier } = get();
         const monthlyOrders = orders.filter(
-          (o) => o.weddingDate.startsWith(month) && o.status !== 'cancelled'
+          (o) => o.weddingDate.startsWith(month) && o.status !== 'cancelled' && o.status !== 'pending'
         );
         
         const totalOrders = monthlyOrders.length;
@@ -292,7 +405,8 @@ export const useAppStore = create<AppState>()(
         
         if (!order || !order.floristId) return;
         
-        const commission = calculateCommission(order.floristId, order.amount);
+        const orderMonth = order.weddingDate.substring(0, 7);
+        const commission = calculateCommission(order.floristId, order.amount, orderMonth);
         
         addSettlement({
           orderId: order.id,
@@ -306,6 +420,7 @@ export const useAppStore = create<AppState>()(
           settlementDate: new Date().toISOString().split('T')[0],
           status: 'pending',
           type: 'wedding',
+          recoveryDate: recoveryDate || undefined,
         });
         
         const florist = florists.find((f) => f.id === order.floristId);
@@ -334,7 +449,7 @@ export const useAppStore = create<AppState>()(
                 id: `recovery-${Date.now()}`,
                 floristId: order.floristId!,
                 date: recoveryDate,
-                type: 'recovery',
+                type: 'recovery' as const,
                 orderId: order.id,
                 notes: `撤场回收 - 订单 ${order.orderNo}`,
                 createdAt: new Date().toISOString(),

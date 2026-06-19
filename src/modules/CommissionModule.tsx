@@ -5,7 +5,7 @@ import { format } from 'date-fns';
 import { zhCN } from 'date-fns/locale';
 
 function CommissionModule() {
-  const { florists, commissionTiers, getCommissionTier, getMonthlyStats, calculateCommission } = useAppStore();
+  const { florists, commissionTiers, getCommissionTier, getMonthlyStats, calculateCommission, getMonthlyFloristSales } = useAppStore();
   const [selectedMonth, setSelectedMonth] = useState(format(new Date(), 'yyyy-MM'));
   const [simulateAmount, setSimulateAmount] = useState(10000);
   const [selectedFloristForSim, setSelectedFloristForSim] = useState(florists[0]?.id || '');
@@ -20,12 +20,6 @@ function CommissionModule() {
     'from-purple-400 to-purple-500',
   ];
 
-  const getFloristCurrentTier = (floristId: string) => {
-    const florist = florists.find((f) => f.id === floristId);
-    if (!florist) return null;
-    return getCommissionTier(florist.monthlySales);
-  };
-
   const getNextTier = (currentTierId: string | undefined) => {
     const sortedTiers = [...commissionTiers].sort((a, b) => a.minSales - b.minSales);
     if (!currentTierId) return sortedTiers[0];
@@ -34,28 +28,30 @@ function CommissionModule() {
     return sortedTiers[currentIndex + 1];
   };
 
-  const getProgressToNextTier = (floristId: string) => {
-    const florist = florists.find((f) => f.id === floristId);
-    if (!florist) return { progress: 100, nextTier: null, remaining: 0 };
-    
-    const currentTier = getCommissionTier(florist.monthlySales);
+  const getProgressToNextTier = (floristId: string, monthlySales: number) => {
+    const currentTier = getCommissionTier(monthlySales);
     const nextTier = getNextTier(currentTier?.id);
-    
+
     if (!nextTier) return { progress: 100, nextTier: null, remaining: 0 };
-    
-    const progress = ((florist.monthlySales - currentTier!.minSales) / (nextTier.minSales - currentTier!.minSales)) * 100;
-    const remaining = nextTier.minSales - florist.monthlySales;
-    
+    if (!currentTier) return { progress: 0, nextTier, remaining: nextTier.minSales };
+
+    const progress = ((monthlySales - currentTier.minSales) / (nextTier.minSales - currentTier.minSales)) * 100;
+    const remaining = nextTier.minSales - monthlySales;
+
     return { progress: Math.min(progress, 100), nextTier, remaining };
   };
 
-  const simulatedFlorist = florists.find((f) => f.id === selectedFloristForSim);
+  const simulatedMonthlySales = selectedFloristForSim
+    ? getMonthlyFloristSales(selectedFloristForSim, selectedMonth)
+    : 0;
   const simulatedResult = selectedFloristForSim
-    ? calculateCommission(selectedFloristForSim, simulateAmount)
+    ? calculateCommission(selectedFloristForSim, simulateAmount, selectedMonth)
     : { rate: 0, amount: 0 };
 
-  const projectedSales = (simulatedFlorist?.monthlySales || 0) + simulateAmount;
+  const projectedSales = simulatedMonthlySales + simulateAmount;
   const projectedTier = getCommissionTier(projectedSales);
+
+  const simulatedFlorist = florists.find((f) => f.id === selectedFloristForSim);
 
   return (
     <div className="space-y-6">
@@ -114,7 +110,9 @@ function CommissionModule() {
 
         <div className="space-y-6">
           <div className="card">
-            <h3 className="font-semibold text-gray-800 mb-4">本月概览</h3>
+            <h3 className="font-semibold text-gray-800 mb-4">
+              {format(new Date(selectedMonth + '-01'), 'yyyy年M月', { locale: zhCN })} 概览
+            </h3>
             <div className="space-y-4">
               <div className="flex items-center justify-between">
                 <span className="text-gray-500">总订单数</span>
@@ -184,9 +182,11 @@ function CommissionModule() {
               {simulatedFlorist && (
                 <div className="bg-white rounded-xl p-4 space-y-3">
                   <div className="flex items-center justify-between text-sm">
-                    <span className="text-gray-500">当月累计</span>
+                    <span className="text-gray-500">
+                      {format(new Date(selectedMonth + '-01'), 'M月', { locale: zhCN })}累计
+                    </span>
                     <span className="font-medium">
-                      ¥{simulatedFlorist.monthlySales.toLocaleString()}
+                      ¥{simulatedMonthlySales.toLocaleString()}
                     </span>
                   </div>
                   <div className="flex items-center justify-between text-sm">
@@ -240,7 +240,7 @@ function CommissionModule() {
             .sort((a, b) => b.salesAmount - a.salesAmount)
             .map((stat, index) => {
               const florist = florists.find((f) => f.id === stat.floristId);
-              const progress = getProgressToNextTier(stat.floristId);
+              const progress = getProgressToNextTier(stat.floristId, stat.salesAmount);
               const currentTier = getCommissionTier(stat.salesAmount);
 
               return (
