@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
-import type { Florist, ScheduleItem, Order, CommissionTier, SettlementRecord, CandidateFlorist, MonthlyCloseOut } from '../types';
+import type { Florist, ScheduleItem, Order, CommissionTier, SettlementRecord, CandidateFlorist, MonthlyCloseOut, CloseOutDiffItem } from '../types';
 import { generateMockFlorists, generateMockSchedules, generateMockOrders, generateCommissionTiers } from '../data/mockData';
 import { format, addDays, parseISO } from 'date-fns';
 
@@ -60,6 +60,8 @@ interface AppState {
   reopenMonth: (month: string) => void;
   isMonthClosed: (month: string) => MonthlyCloseOut | null;
   getMonthCloseOut: (month: string) => MonthlyCloseOut | null;
+  releaseSchedule: (scheduleId: string) => { success: boolean; message: string };
+  getCloseOutDiff: (month: string) => CloseOutDiffItem[];
 }
 
 const OCCUPIED_TYPES: ScheduleItem['type'][] = ['booked', 'leave', 'recovery'];
@@ -158,9 +160,25 @@ export const useAppStore = create<AppState>()(
           schedule.floristId === newFloristId && schedule.date === newDate;
         if (sameFloristSameDate) return { success: true, message: '无需移动' };
 
-        const { hasConflict } = checkScheduleConflict(newFloristId, newDate, scheduleId);
+        const { hasConflict, conflicts } = checkScheduleConflict(newFloristId, newDate, scheduleId);
         if (hasConflict && !force) {
           return { success: false, message: '目标花艺师在该日期已有冲突安排' };
+        }
+
+        if (hasConflict && force) {
+          const conflictIds = conflicts.map(c => c.id);
+          set((state) => ({
+            schedules: state.schedules.filter(s => !conflictIds.includes(s.id))
+          }));
+          conflicts.forEach(conflict => {
+            if (conflict.orderId && conflict.type === 'booked') {
+              set((state) => ({
+                orders: state.orders.map(o =>
+                  o.id === conflict.orderId ? { ...o, floristId: undefined, status: 'pending' as const, assignedAt: undefined } : o
+                ),
+              }));
+            }
+          });
         }
 
         set((state) => ({
@@ -187,6 +205,29 @@ export const useAppStore = create<AppState>()(
         }
 
         return { success: true, message: '档期已移动' };
+      },
+
+      releaseSchedule: (scheduleId) => {
+        const { schedules, orders } = get();
+        const schedule = schedules.find((s) => s.id === scheduleId);
+        if (!schedule) return { success: false, message: '档期不存在' };
+        if (schedule.type === 'available') return { success: false, message: '空闲档期无需释放' };
+
+        set((state) => ({
+          schedules: state.schedules.filter((s) => s.id !== scheduleId),
+        }));
+
+        if (schedule.orderId && schedule.type === 'booked') {
+          set((state) => ({
+            orders: state.orders.map((o) =>
+              o.id === schedule.orderId
+                ? { ...o, floristId: undefined, status: 'pending' as const, assignedAt: undefined }
+                : o
+            ),
+          }));
+        }
+
+        return { success: true, message: '档期已释放' };
       },
 
       addOrder: (order) => {
@@ -507,6 +548,7 @@ export const useAppStore = create<AppState>()(
           commissionAmount: commission.amount,
           platformAmount: order.amount - commission.amount,
           settlementDate: new Date().toISOString().split('T')[0],
+          weddingMonth: orderMonth,
           status: monthClosed ? 'settled' : 'pending',
           type: 'wedding',
           recoveryDate: recoveryDate || undefined,
@@ -577,7 +619,7 @@ export const useAppStore = create<AppState>()(
         set((state) => ({
           closeOuts: [...state.closeOuts, closeOut],
           settlements: state.settlements.map((s) =>
-            s.settlementDate.startsWith(month)
+            s.weddingMonth === month
               ? { ...s, monthClosed: true, status: s.status === 'pending' ? 'settled' as const : s.status }
               : s
           ),
@@ -588,7 +630,7 @@ export const useAppStore = create<AppState>()(
         set((state) => ({
           closeOuts: state.closeOuts.filter((c) => c.month !== month),
           settlements: state.settlements.map((s) =>
-            s.settlementDate.startsWith(month) ? { ...s, monthClosed: false } : s
+            s.weddingMonth === month ? { ...s, monthClosed: false } : s
           ),
         }));
       },
@@ -599,6 +641,66 @@ export const useAppStore = create<AppState>()(
 
       getMonthCloseOut: (month) => {
         return get().closeOuts.find((c) => c.month === month) || null;
+      },
+
+      getCloseOutDiff: (month) => {
+        const { settlements, orders, closeOuts, florists, getMonthlyStats } = get();
+        const closeOut = closeOuts.find((c) => c.month === month);
+        if (!closeOut) return [];
+
+        const currentStats = getMonthlyStats(month);
+        const currentOrderIds = orders
+          .filter((o) => o.weddingDate.startsWith(month) && o.status !== 'cancelled' && o.status !== 'pending')
+          .map((o) => o.id);
+
+        const closedOrderIds = new Set(
+          settlements
+            .filter((s) => s.weddingMonth === month && s.monthClosed)
+            .map((s) => s.orderId)
+        );
+
+        const diffItems: CloseOutDiffItem[] = [];
+        currentOrderIds.forEach((orderId) => {
+          if (!closedOrderIds.has(orderId)) {
+            const order = orders.find((o) => o.id === orderId);
+            if (order && order.floristId) {
+              const florist = florists.find((f) => f.id === order.floristId);
+              diffItems.push({
+                orderId: order.id,
+                orderNo: order.orderNo,
+                floristId: order.floristId,
+                floristName: florist?.name || '',
+                amount: order.amount,
+                commissionRate: 0,
+                commissionAmount: 0,
+                platformAmount: order.amount,
+                reason: order.completedAt ? '关账后登记完成' : '关账后新增分配',
+                completedAt: order.completedAt || '',
+              });
+            }
+          }
+        });
+
+        settlements
+          .filter((s) => s.weddingMonth === month && !closedOrderIds.has(s.orderId))
+          .forEach((s) => {
+            if (!diffItems.find((d) => d.orderId === s.orderId)) {
+              diffItems.push({
+                orderId: s.orderId,
+                orderNo: s.orderNo,
+                floristId: s.floristId,
+                floristName: s.floristName,
+                amount: s.amount,
+                commissionRate: s.commissionRate,
+                commissionAmount: s.commissionAmount,
+                platformAmount: s.platformAmount,
+                reason: '关账后新增结算',
+                completedAt: '',
+              });
+            }
+          });
+
+        return diffItems;
       },
     }),
     {

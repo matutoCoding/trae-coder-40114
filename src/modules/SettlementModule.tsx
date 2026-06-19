@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { FileText, CheckCircle, Clock, DollarSign, Calendar, RefreshCw, Package, Download, Lock, Unlock, Eye } from 'lucide-react';
+import { FileText, CheckCircle, Clock, DollarSign, Calendar, RefreshCw, Package, Download, Lock, Unlock, Eye, AlertTriangle } from 'lucide-react';
 import { useAppStore } from '../store/useAppStore';
 import { format } from 'date-fns';
 import { zhCN } from 'date-fns/locale';
@@ -9,7 +9,7 @@ const statusColors = { pending: 'bg-amber-100 text-amber-700', settled: 'bg-gree
 const typeLabels = { wedding: '婚礼服务', recovery: '撤场回收' };
 
 function SettlementModule() {
-  const { orders, settlements, florists, completeOrder, updateSettlement, batchSettle, getMonthlyStats, closeMonth, reopenMonth, isMonthClosed, getMonthCloseOut } = useAppStore();
+  const { orders, settlements, florists, completeOrder, updateSettlement, batchSettle, getMonthlyStats, closeMonth, reopenMonth, isMonthClosed, getMonthCloseOut, getCloseOutDiff } = useAppStore();
   const [showCompleteModal, setShowCompleteModal] = useState(false);
   const [selectedOrderId, setSelectedOrderId] = useState('');
   const [recoveryDate, setRecoveryDate] = useState('');
@@ -17,21 +17,23 @@ function SettlementModule() {
   const [filterFlorist, setFilterFlorist] = useState<string>('all');
   const [filterStatus, setFilterStatus] = useState<'all' | 'pending' | 'settled'>('all');
   const [showClosePreview, setShowClosePreview] = useState(false);
+  const [showDiffDetail, setShowDiffDetail] = useState(false);
 
   const assignedOrders = orders.filter((o) => o.status === 'assigned' || o.status === 'in_progress');
   const completedOrders = orders.filter((o) => o.status === 'completed');
   const monthlyStats = getMonthlyStats(selectedMonth);
   const closeOutInfo = getMonthCloseOut(selectedMonth);
   const isClosed = !!closeOutInfo;
+  const diffItems = closeOutInfo ? getCloseOutDiff(selectedMonth) : [];
 
   const filteredSettlements = settlements.filter((s) => {
     if (filterStatus !== 'all' && s.status !== filterStatus) return false;
     if (filterFlorist !== 'all' && s.floristId !== filterFlorist) return false;
-    if (s.settlementDate.startsWith(selectedMonth)) return true;
+    if (s.weddingMonth === selectedMonth) return true;
     return false;
   });
 
-  const monthAllSettlements = settlements.filter((s) => s.settlementDate.startsWith(selectedMonth));
+  const monthAllSettlements = settlements.filter((s) => s.weddingMonth === selectedMonth);
   const monthAllPending = monthAllSettlements.filter((s) => s.status === 'pending' && !s.monthClosed);
   const monthAllPendingAmount = monthAllPending.reduce((sum, s) => sum + s.commissionAmount, 0);
 
@@ -105,6 +107,29 @@ function SettlementModule() {
     const link = document.createElement('a');
     link.href = url;
     link.download = `结算明细_${selectedMonth}.csv`;
+    link.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const handleExportDiffCSV = () => {
+    const headers = ['订单号', '花艺师', '订单金额', '抽成金额', '平台收益', '原因', '完成时间'];
+    const rows = diffItems.map((d) => [
+      d.orderNo, d.floristName, d.amount,
+      d.commissionAmount, d.platformAmount, d.reason,
+      d.completedAt ? d.completedAt.replace('T', ' ').substring(0, 19) : '',
+    ]);
+
+    const csvContent = [
+      headers.join(','),
+      ...rows.map((row) => row.map((cell) => { const str = String(cell); return str.includes(',') ? `"${str}"` : str; }).join(',')),
+    ].join('\n');
+
+    const BOM = '\uFEFF';
+    const blob = new Blob([BOM + csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `关账差额明细_${selectedMonth}.csv`;
     link.click();
     URL.revokeObjectURL(url);
   };
@@ -205,10 +230,15 @@ function SettlementModule() {
               const hasDiff = revDiff !== 0 || commDiff !== 0;
               return hasDiff ? (
                 <div className="mt-3 pt-3 border-t border-gray-200 space-y-1">
-                  <p className="text-sm text-amber-600 flex items-center gap-1">
-                    <Eye className="w-4 h-4" />
-                    关账差额（关账后新增的结算记录导致）
-                  </p>
+                  <div className="flex items-center justify-between">
+                    <p className="text-sm text-amber-600 flex items-center gap-1">
+                      <Eye className="w-4 h-4" />
+                      关账差额（关账后新增的结算记录导致）
+                    </p>
+                    <button onClick={() => setShowDiffDetail(true)} className="flex items-center gap-1 px-2 py-1 text-xs bg-amber-100 text-amber-700 rounded-md hover:bg-amber-200 transition-colors">
+                      <AlertTriangle className="w-3 h-3" />查看差额明细
+                    </button>
+                  </div>
                   {revDiff !== 0 && (
                     <p className="text-xs text-amber-500">营业额差额：{revDiff > 0 ? '+' : ''}¥{revDiff.toLocaleString()}（关账时 ¥{closeOutInfo.totalRevenue.toLocaleString()} → 当前 ¥{monthlyStats.totalRevenue.toLocaleString()}）</p>
                   )}
@@ -310,6 +340,58 @@ function SettlementModule() {
           </div>
         </div>
       </div>
+
+      {showDiffDetail && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl w-full max-w-3xl max-h-[80vh] flex flex-col">
+            <div className="flex items-center justify-between p-6 border-b border-gray-100">
+              <div className="flex items-center gap-2">
+                <AlertTriangle className="w-5 h-5 text-amber-500" />
+                <h3 className="text-lg font-semibold text-gray-800">关账差额明细</h3>
+                <span className="badge bg-amber-100 text-amber-700">{diffItems.length} 条记录</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <button onClick={handleExportDiffCSV} disabled={diffItems.length === 0} className="flex items-center gap-1 px-3 py-1.5 text-sm bg-green-50 text-green-700 rounded-lg hover:bg-green-100 transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
+                  <Download className="w-4 h-4" />导出CSV
+                </button>
+                <button onClick={() => setShowDiffDetail(false)} className="text-gray-400 hover:text-gray-600 text-xl leading-none">&times;</button>
+              </div>
+            </div>
+            <div className="overflow-auto flex-1 p-6">
+              {diffItems.length === 0 ? (
+                <div className="text-center py-12"><CheckCircle className="w-12 h-12 text-green-200 mx-auto mb-3" /><p className="text-gray-400">无差额记录</p></div>
+              ) : (
+                <table className="w-full">
+                  <thead>
+                    <tr className="border-b border-gray-100">
+                      <th className="text-left py-3 px-3 text-sm font-medium text-gray-500">订单号</th>
+                      <th className="text-left py-3 px-3 text-sm font-medium text-gray-500">花艺师</th>
+                      <th className="text-right py-3 px-3 text-sm font-medium text-gray-500">订单金额</th>
+                      <th className="text-right py-3 px-3 text-sm font-medium text-gray-500">抽成金额</th>
+                      <th className="text-right py-3 px-3 text-sm font-medium text-gray-500">平台收益</th>
+                      <th className="text-left py-3 px-3 text-sm font-medium text-gray-500">原因</th>
+                      <th className="text-left py-3 px-3 text-sm font-medium text-gray-500">完成时间</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {diffItems.map((item) => (
+                      <tr key={item.orderId} className="border-b border-gray-50 hover:bg-amber-50/30">
+                        <td className="py-3 px-3"><span className="text-sm font-mono text-gray-600">{item.orderNo}</span></td>
+                        <td className="py-3 px-3"><span className="text-sm text-gray-700">{item.floristName}</span></td>
+                        <td className="py-3 px-3 text-right"><span className="text-sm text-gray-700">¥{item.amount.toLocaleString()}</span></td>
+                        <td className="py-3 px-3 text-right"><span className="text-sm font-medium text-amber-600">¥{item.commissionAmount.toLocaleString()}</span></td>
+                        <td className="py-3 px-3 text-right"><span className="text-sm font-medium text-green-600">¥{item.platformAmount.toLocaleString()}</span></td>
+                        <td className="py-3 px-3"><span className="text-sm text-amber-600">{item.reason}</span></td>
+                        <td className="py-3 px-3"><span className="text-sm text-gray-500">{item.completedAt ? item.completedAt.replace('T', ' ').substring(0, 19) : '-'}</span></td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       {showClosePreview && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">

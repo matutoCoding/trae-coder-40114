@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Plus, Sparkles, User, MapPin, Calendar, Package, Clock, CheckCircle, XCircle, Loader, Award, BarChart3, LayoutList, AlertTriangle, ArrowRightCircle } from 'lucide-react';
+import { Plus, Sparkles, User, MapPin, Calendar, Package, Clock, CheckCircle, XCircle, Loader, Award, BarChart3, LayoutList, AlertTriangle, ArrowRightCircle, Scissors } from 'lucide-react';
 import { useAppStore } from '../store/useAppStore';
 import type { Order, CandidateFlorist } from '../types';
 import { format } from 'date-fns';
@@ -46,7 +46,7 @@ const suggestionIcons: Record<string, string> = {
 };
 
 function AssignmentModule() {
-  const { orders, florists, addOrder, deleteOrder, getAvailableFlorists, getCandidateFlorists, confirmAssign } = useAppStore();
+  const { orders, florists, schedules, addOrder, deleteOrder, getAvailableFlorists, getCandidateFlorists, confirmAssign, releaseSchedule } = useAppStore();
   const [showOrderModal, setShowOrderModal] = useState(false);
   const [selectedStatus, setSelectedStatus] = useState<string>('all');
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
@@ -433,8 +433,39 @@ function AssignmentModule() {
                         <div><p className="text-xs text-gray-400">当日档期</p><p className="text-sm font-semibold text-red-500 mt-0.5">{candidate.unavailabilityReason}</p></div>
                         <div><p className="text-xs text-gray-400">建议处理</p><p className="text-sm font-semibold text-amber-600 mt-0.5">{candidate.suggestion || '-'}</p></div>
                       </div>
+                      {candidate.daySchedule.filter((s) => s.type === 'recovery' || s.type === 'leave').length > 0 && (
+                        <div className="mt-3 pt-3 border-t border-gray-200 flex flex-wrap gap-2">
+                          {candidate.daySchedule
+                            .filter((s) => s.type === 'recovery' || s.type === 'leave')
+                            .map((schedule) => (
+                              <button
+                                key={schedule.id}
+                                onClick={() => {
+                                  if (confirm('确定要释放该档期？释放后关联订单将回到待分配状态。')) {
+                                    const result = releaseSchedule(schedule.id);
+                                    if (result.success) {
+                                      setCandidates(getCandidateFlorists(currentOrderId));
+                                      showToast(result.message, 'success');
+                                    } else {
+                                      showToast(result.message, 'error');
+                                    }
+                                  }
+                                }}
+                                className="px-3 py-1.5 text-xs bg-amber-50 text-amber-700 rounded-lg hover:bg-amber-100 flex items-center gap-1"
+                              >
+                                <Scissors className="w-3 h-3" />
+                                释放{schedule.type === 'recovery' ? '撤场' : '休假'}
+                              </button>
+                            ))}
+                        </div>
+                      )}
                     </div>
                   ))}
+                </div>
+                <div className="mt-4 p-3 bg-amber-50 rounded-lg border border-amber-100">
+                  <p className="text-sm text-amber-700">
+                    <span className="font-medium">手动调班：</span>释放撤场或休假档期后，系统将重新计算推荐排序
+                  </p>
                 </div>
               </div>
             )}
