@@ -64,7 +64,18 @@ export interface SettlementRecord {
   status: 'pending' | 'settled';
   type: 'wedding' | 'recovery';
   recoveryDate?: string;
+  monthClosed?: boolean;
   notes?: string;
+}
+
+export interface MonthlyCloseOut {
+  month: string;
+  closedAt: string;
+  totalRevenue: number;
+  totalCommission: number;
+  totalPlatform: number;
+  orderCount: number;
+  closedBy: string;
 }
 
 export interface MonthlyStats {
@@ -91,6 +102,7 @@ export interface CandidateFlorist {
   levelScore: number;
   totalScore: number;
   rank: number;
+  suggestion?: string;
 }
 
 export type ModuleType = 'schedule' | 'assignment' | 'commission' | 'settlement';

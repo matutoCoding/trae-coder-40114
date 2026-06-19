@@ -53,7 +53,7 @@ const scheduleTypeDotColors = {
 };
 
 function ScheduleModule() {
-  const { florists, schedules, addFlorist, updateFlorist, deleteFlorist, addSchedule, deleteSchedule } = useAppStore();
+  const { florists, schedules, addFlorist, updateFlorist, deleteFlorist, addSchedule, deleteSchedule, moveSchedule, checkScheduleConflict } = useAppStore();
   const [currentMonth, setCurrentMonth] = useState(new Date());
   const [selectedDate, setSelectedDate] = useState<string>(format(new Date(), 'yyyy-MM-dd'));
   const [showFloristModal, setShowFloristModal] = useState(false);
@@ -64,6 +64,7 @@ function ScheduleModule() {
   const [scheduleNotes, setScheduleNotes] = useState('');
   const [viewMode, setViewMode] = useState<'month' | 'week'>('week');
   const [currentWeekStart, setCurrentWeekStart] = useState(startOfWeek(new Date(), { weekStartsOn: 1 }));
+  const [dragScheduleId, setDragScheduleId] = useState<string | null>(null);
   const [floristForm, setFloristForm] = useState({
     name: '',
     phone: '',
@@ -179,6 +180,39 @@ function ScheduleModule() {
     setShowScheduleModal(true);
   };
 
+  const handleDragStart = (e: React.DragEvent, scheduleId: string) => {
+    setDragScheduleId(scheduleId);
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/plain', scheduleId);
+  };
+
+  const handleDragEnd = () => {
+    setDragScheduleId(null);
+  };
+
+  const handleDrop = (floristId: string, dateStr: string) => {
+    if (!dragScheduleId) return;
+    const { hasConflict, conflicts } = checkScheduleConflict(floristId, dateStr, dragScheduleId);
+    if (hasConflict) {
+      const conflictNames = conflicts
+        .map((c) => `${scheduleTypeLabels[c.type]}`)
+        .join('、');
+      const floristName = getFloristName(floristId);
+      const confirmed = confirm(
+        `目标花艺师「${floristName}」在 ${dateStr} 已有${conflictNames}安排，是否仍要移动？`
+      );
+      if (!confirmed) {
+        setDragScheduleId(null);
+        return;
+      }
+    }
+    const result = moveSchedule(dragScheduleId, floristId, dateStr);
+    if (!result.success) {
+      alert(result.message);
+    }
+    setDragScheduleId(null);
+  };
+
   const selectedDateSchedules = schedules.filter((s) => s.date === selectedDate);
 
   const activeFlorists = florists.filter((f) => f.status === 'active');
@@ -284,14 +318,21 @@ function ScheduleModule() {
                         <td
                           key={dateStr}
                           onClick={() => handleWeekCellClick(florist.id, dateStr)}
+                          onDragOver={(e) => e.preventDefault()}
+                          onDrop={() => handleDrop(florist.id, dateStr)}
                           className={`py-2 px-2 border-b border-gray-50 text-center cursor-pointer transition-all ${
                             isSelected ? 'bg-rose-50 ring-2 ring-rose-200' : 'hover:bg-gray-50'
                           } ${isTodayDate ? 'bg-rose-50/30' : ''}`}
                         >
                           {schedule ? (
                             <div
-                              className={`inline-flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-medium border ${scheduleTypeColors[schedule.type]}`}
-                                            >
+                              draggable={schedule.type === 'booked' || schedule.type === 'recovery'}
+                              onDragStart={(e) => handleDragStart(e, schedule.id)}
+                              onDragEnd={handleDragEnd}
+                              className={`inline-flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-medium border ${scheduleTypeColors[schedule.type]}${
+                                schedule.type === 'booked' || schedule.type === 'recovery' ? ' cursor-grab active:cursor-grabbing' : ''
+                              }`}
+                            >
                               <span className={`w-1.5 h-1.5 rounded-full ${scheduleTypeDotColors[schedule.type]}`} />
                               {scheduleTypeLabels[schedule.type]}
                             </div>
