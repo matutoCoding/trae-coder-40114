@@ -31,6 +31,10 @@ function SettlementModule() {
     return false;
   });
 
+  const monthAllSettlements = settlements.filter((s) => s.settlementDate.startsWith(selectedMonth));
+  const monthAllPending = monthAllSettlements.filter((s) => s.status === 'pending' && !s.monthClosed);
+  const monthAllPendingAmount = monthAllPending.reduce((sum, s) => sum + s.commissionAmount, 0);
+
   const pendingSettlements = filteredSettlements.filter((s) => s.status === 'pending' && !s.monthClosed);
   const totalPendingAmount = pendingSettlements.reduce((sum, s) => sum + s.commissionAmount, 0);
   const totalSettledAmount = filteredSettlements.filter((s) => s.status === 'settled').reduce((sum, s) => sum + s.commissionAmount, 0);
@@ -58,7 +62,7 @@ function SettlementModule() {
   };
 
   const handleBatchSettle = () => {
-    const ids = pendingSettlements.map((s) => s.id);
+    const ids = monthAllPending.map((s) => s.id);
     if (ids.length === 0) return;
     batchSettle(ids);
   };
@@ -195,14 +199,25 @@ function SettlementModule() {
               <div><span className="text-gray-500">关账抽成</span><p className="font-medium text-amber-600 mt-0.5">¥{closeOutInfo.totalCommission.toLocaleString()}</p></div>
               <div><span className="text-gray-500">关账平台收益</span><p className="font-medium text-green-600 mt-0.5">¥{closeOutInfo.totalPlatform.toLocaleString()}</p></div>
             </div>
-            {(closeOutInfo.totalRevenue !== monthlyStats.totalRevenue) && (
-              <div className="mt-3 pt-3 border-t border-gray-200">
-                <p className="text-sm text-amber-600 flex items-center gap-1">
-                  <Eye className="w-4 h-4" />
-                  差额提醒：当前营业额 ¥{monthlyStats.totalRevenue.toLocaleString()} 与关账时 ¥{closeOutInfo.totalRevenue.toLocaleString()} 不一致
-                </p>
-              </div>
-            )}
+            {(() => {
+              const revDiff = monthlyStats.totalRevenue - closeOutInfo.totalRevenue;
+              const commDiff = monthlyStats.totalCommission - closeOutInfo.totalCommission;
+              const hasDiff = revDiff !== 0 || commDiff !== 0;
+              return hasDiff ? (
+                <div className="mt-3 pt-3 border-t border-gray-200 space-y-1">
+                  <p className="text-sm text-amber-600 flex items-center gap-1">
+                    <Eye className="w-4 h-4" />
+                    关账差额（关账后新增的结算记录导致）
+                  </p>
+                  {revDiff !== 0 && (
+                    <p className="text-xs text-amber-500">营业额差额：{revDiff > 0 ? '+' : ''}¥{revDiff.toLocaleString()}（关账时 ¥{closeOutInfo.totalRevenue.toLocaleString()} → 当前 ¥{monthlyStats.totalRevenue.toLocaleString()}）</p>
+                  )}
+                  {commDiff !== 0 && (
+                    <p className="text-xs text-amber-500">抽成差额：{commDiff > 0 ? '+' : ''}¥{commDiff.toLocaleString()}（关账时 ¥{closeOutInfo.totalCommission.toLocaleString()} → 当前 ¥{monthlyStats.totalCommission.toLocaleString()}）</p>
+                  )}
+                </div>
+              ) : null;
+            })()}
           </div>
         )}
 
@@ -307,10 +322,11 @@ function SettlementModule() {
               <div className="flex justify-between"><span className="text-gray-600">总营业额</span><span className="font-bold text-rose-600">¥{monthlyStats.totalRevenue.toLocaleString()}</span></div>
               <div className="flex justify-between"><span className="text-gray-600">花艺师抽成</span><span className="font-bold text-amber-600">¥{monthlyStats.totalCommission.toLocaleString()}</span></div>
               <div className="flex justify-between pt-3 border-t border-gray-200"><span className="text-gray-600">平台净收益</span><span className="font-bold text-green-600">¥{(monthlyStats.totalRevenue - monthlyStats.totalCommission).toLocaleString()}</span></div>
-              <div className="flex justify-between"><span className="text-gray-600">待结算笔数</span><span className="font-medium text-amber-600">{pendingSettlements.length} 笔</span></div>
+              <div className="flex justify-between"><span className="text-gray-600">待结算笔数</span><span className="font-medium text-amber-600">{monthAllPending.length} 笔</span></div>
+              <div className="flex justify-between"><span className="text-gray-600">待结算金额</span><span className="font-medium text-amber-600">¥{monthAllPendingAmount.toLocaleString()}</span></div>
             </div>
-            {pendingSettlements.length > 0 && (
-              <div className="mt-3 p-3 bg-amber-50 rounded-lg"><p className="text-sm text-amber-700">⚠ 关账前有 {pendingSettlements.length} 笔待结算记录，关账时将自动批量结算。</p></div>
+            {monthAllPending.length > 0 && (
+              <div className="mt-3 p-3 bg-amber-50 rounded-lg"><p className="text-sm text-amber-700">⚠ 关账前有 {monthAllPending.length} 笔待结算记录（金额 ¥{monthAllPendingAmount.toLocaleString()}），确认关账时将自动批量结算。</p></div>
             )}
             <div className="flex gap-3 mt-6">
               <button onClick={() => setShowClosePreview(false)} className="flex-1 btn-secondary">取消</button>
@@ -325,31 +341,65 @@ function SettlementModule() {
           <div className="bg-white rounded-2xl w-full max-w-md p-6">
             <h3 className="text-lg font-semibold text-gray-800 mb-2">登记订单完成</h3>
             <p className="text-sm text-gray-500 mb-6">完成后将自动生成分账明细，可同时设置撤场回收日期</p>
-            <div className="space-y-4">
-              <div className="p-4 bg-gray-50 rounded-xl">
-                {(() => {
-                  const order = orders.find((o) => o.id === selectedOrderId);
-                  const florist = florists.find((f) => f.id === order?.floristId);
-                  return (
-                    <>
-                      <div className="flex items-center justify-between mb-3"><span className="text-sm text-gray-500">新人</span><span className="font-medium text-gray-800">{order?.customerName}</span></div>
-                      <div className="flex items-center justify-between mb-3"><span className="text-sm text-gray-500">订单号</span><span className="font-mono text-sm text-gray-600">{order?.orderNo}</span></div>
-                      <div className="flex items-center justify-between mb-3"><span className="text-sm text-gray-500">花艺师</span><span className="text-gray-700">{florist?.name || '未分配'}</span></div>
-                      <div className="flex items-center justify-between"><span className="text-sm text-gray-500">订单金额</span><span className="font-bold text-rose-500">¥{order?.amount.toLocaleString()}</span></div>
-                    </>
-                  );
-                })()}
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">撤场回收日期（可选）</label>
-                <input type="date" value={recoveryDate} onChange={(e) => setRecoveryDate(e.target.value)} className="input-field" />
-                <p className="text-xs text-gray-400 mt-1">设置后将自动添加到花艺师档期，该日视为占用</p>
-              </div>
-            </div>
-            <div className="flex gap-3 mt-6">
-              <button onClick={() => setShowCompleteModal(false)} className="flex-1 btn-secondary">取消</button>
-              <button onClick={handleCompleteOrder} className="flex-1 btn-primary">确认完成</button>
-            </div>
+            {(() => {
+              const order = orders.find((o) => o.id === selectedOrderId);
+              const orderMonth = order?.weddingDate?.substring(0, 7) || '';
+              const orderMonthClosed = !!getMonthCloseOut(orderMonth);
+              return orderMonthClosed ? (
+                <div className="space-y-4">
+                  <div className="p-4 bg-gray-50 rounded-xl">
+                    {(() => {
+                      const florist = florists.find((f) => f.id === order?.floristId);
+                      return (
+                        <>
+                          <div className="flex items-center justify-between mb-3"><span className="text-sm text-gray-500">新人</span><span className="font-medium text-gray-800">{order?.customerName}</span></div>
+                          <div className="flex items-center justify-between mb-3"><span className="text-sm text-gray-500">订单号</span><span className="font-mono text-sm text-gray-600">{order?.orderNo}</span></div>
+                          <div className="flex items-center justify-between mb-3"><span className="text-sm text-gray-500">花艺师</span><span className="text-gray-700">{florist?.name || '未分配'}</span></div>
+                          <div className="flex items-center justify-between"><span className="text-sm text-gray-500">订单金额</span><span className="font-bold text-rose-500">¥{order?.amount.toLocaleString()}</span></div>
+                        </>
+                      );
+                    })()}
+                  </div>
+                  <div className="p-3 bg-purple-50 rounded-lg border border-purple-200">
+                    <p className="text-sm text-purple-700 font-medium">🔒 该订单所属月份 {orderMonth} 已关账</p>
+                    <p className="text-xs text-purple-500 mt-1">结算记录将以「已结算+已关账」状态生成，金额将计入关账差额</p>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">撤场回收日期（可选）</label>
+                    <input type="date" value={recoveryDate} onChange={(e) => setRecoveryDate(e.target.value)} className="input-field" />
+                  </div>
+                  <div className="flex gap-3 mt-6">
+                    <button onClick={() => setShowCompleteModal(false)} className="flex-1 btn-secondary">取消</button>
+                    <button onClick={handleCompleteOrder} className="flex-1 bg-purple-600 text-white px-4 py-2 rounded-lg hover:bg-purple-700 transition-colors font-medium">确认完成（锁定结算）</button>
+                  </div>
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  <div className="p-4 bg-gray-50 rounded-xl">
+                    {(() => {
+                      const florist = florists.find((f) => f.id === order?.floristId);
+                      return (
+                        <>
+                          <div className="flex items-center justify-between mb-3"><span className="text-sm text-gray-500">新人</span><span className="font-medium text-gray-800">{order?.customerName}</span></div>
+                          <div className="flex items-center justify-between mb-3"><span className="text-sm text-gray-500">订单号</span><span className="font-mono text-sm text-gray-600">{order?.orderNo}</span></div>
+                          <div className="flex items-center justify-between mb-3"><span className="text-sm text-gray-500">花艺师</span><span className="text-gray-700">{florist?.name || '未分配'}</span></div>
+                          <div className="flex items-center justify-between"><span className="text-sm text-gray-500">订单金额</span><span className="font-bold text-rose-500">¥{order?.amount.toLocaleString()}</span></div>
+                        </>
+                      );
+                    })()}
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">撤场回收日期（可选）</label>
+                    <input type="date" value={recoveryDate} onChange={(e) => setRecoveryDate(e.target.value)} className="input-field" />
+                    <p className="text-xs text-gray-400 mt-1">设置后将自动添加到花艺师档期，该日视为占用</p>
+                  </div>
+                  <div className="flex gap-3 mt-6">
+                    <button onClick={() => setShowCompleteModal(false)} className="flex-1 btn-secondary">取消</button>
+                    <button onClick={handleCompleteOrder} className="flex-1 btn-primary">确认完成</button>
+                  </div>
+                </div>
+              );
+            })()}
           </div>
         </div>
       )}

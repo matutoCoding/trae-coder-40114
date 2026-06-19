@@ -22,7 +22,7 @@ interface AppState {
   getSchedulesByDate: (date: string) => ScheduleItem[];
   getSchedulesByFlorist: (floristId: string) => ScheduleItem[];
   getAvailableFlorists: (date: string) => Florist[];
-  moveSchedule: (scheduleId: string, newFloristId: string, newDate: string) => { success: boolean; message: string };
+  moveSchedule: (scheduleId: string, newFloristId: string, newDate: string, force?: boolean) => { success: boolean; message: string };
   checkScheduleConflict: (floristId: string, date: string, excludeScheduleId?: string) => { hasConflict: boolean; conflicts: ScheduleItem[] };
 
   addOrder: (order: Omit<Order, 'id' | 'orderNo' | 'createdAt' | 'status'>) => void;
@@ -149,7 +149,7 @@ export const useAppStore = create<AppState>()(
         return { hasConflict: conflicts.length > 0, conflicts };
       },
 
-      moveSchedule: (scheduleId, newFloristId, newDate) => {
+      moveSchedule: (scheduleId, newFloristId, newDate, force = false) => {
         const { schedules, checkScheduleConflict } = get();
         const schedule = schedules.find((s) => s.id === scheduleId);
         if (!schedule) return { success: false, message: '档期不存在' };
@@ -159,7 +159,7 @@ export const useAppStore = create<AppState>()(
         if (sameFloristSameDate) return { success: true, message: '无需移动' };
 
         const { hasConflict } = checkScheduleConflict(newFloristId, newDate, scheduleId);
-        if (hasConflict) {
+        if (hasConflict && !force) {
           return { success: false, message: '目标花艺师在该日期已有冲突安排' };
         }
 
@@ -488,12 +488,13 @@ export const useAppStore = create<AppState>()(
       },
 
       completeOrder: (orderId, recoveryDate) => {
-        const { orders, florists, calculateCommission, addSettlement, updateFlorist } = get();
+        const { orders, florists, calculateCommission, addSettlement, updateFlorist, isMonthClosed } = get();
         const order = orders.find((o) => o.id === orderId);
 
         if (!order || !order.floristId) return;
 
         const orderMonth = order.weddingDate.substring(0, 7);
+        const monthClosed = !!isMonthClosed(orderMonth);
         const commission = calculateCommission(order.floristId, order.amount, orderMonth, orderId);
 
         addSettlement({
@@ -506,9 +507,10 @@ export const useAppStore = create<AppState>()(
           commissionAmount: commission.amount,
           platformAmount: order.amount - commission.amount,
           settlementDate: new Date().toISOString().split('T')[0],
-          status: 'pending',
+          status: monthClosed ? 'settled' : 'pending',
           type: 'wedding',
           recoveryDate: recoveryDate || undefined,
+          monthClosed: monthClosed,
         });
 
         const florist = florists.find((f) => f.id === order.floristId);
@@ -561,7 +563,6 @@ export const useAppStore = create<AppState>()(
         if (existing) return;
 
         const stats = getMonthlyStats(month);
-        const monthSettlements = settlements.filter((s) => s.settlementDate.startsWith(month));
 
         const closeOut: MonthlyCloseOut = {
           month,
@@ -576,7 +577,9 @@ export const useAppStore = create<AppState>()(
         set((state) => ({
           closeOuts: [...state.closeOuts, closeOut],
           settlements: state.settlements.map((s) =>
-            s.settlementDate.startsWith(month) ? { ...s, monthClosed: true } : s
+            s.settlementDate.startsWith(month)
+              ? { ...s, monthClosed: true, status: s.status === 'pending' ? 'settled' as const : s.status }
+              : s
           ),
         }));
       },

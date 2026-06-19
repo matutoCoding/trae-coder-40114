@@ -199,16 +199,21 @@ function ScheduleModule() {
         .join('、');
       const floristName = getFloristName(floristId);
       const confirmed = confirm(
-        `目标花艺师「${floristName}」在 ${dateStr} 已有${conflictNames}安排，是否仍要移动？`
+        `目标花艺师「${floristName}」在 ${dateStr} 已有${conflictNames}安排，确认覆盖移动？原有冲突安排将被替换。`
       );
       if (!confirmed) {
         setDragScheduleId(null);
         return;
       }
-    }
-    const result = moveSchedule(dragScheduleId, floristId, dateStr);
-    if (!result.success) {
-      alert(result.message);
+      const result = moveSchedule(dragScheduleId, floristId, dateStr, true);
+      if (!result.success) {
+        alert(result.message);
+      }
+    } else {
+      const result = moveSchedule(dragScheduleId, floristId, dateStr);
+      if (!result.success) {
+        alert(result.message);
+      }
     }
     setDragScheduleId(null);
   };
